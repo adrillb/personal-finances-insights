@@ -1,0 +1,26 @@
+# Virtual environment
+.venv/
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+
+# Zone identifier files (Windows)
+*.xlsx:Zone.Identifier
+
+# IDE
+.vscode/
+.idea/
+.cursor/
+
+# Streamlit cache
+.streamlit/
+
+# Sensitive data - uncomment if you add your real file
+data/*.xlsx

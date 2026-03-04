@@ -1,0 +1,1 @@
+"""Personal finances insights package."""
