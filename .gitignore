@@ -26,4 +26,4 @@ Thumbs.db
 data/*.xlsx
 credentials.json
 .env
-data/.monefy_processed.json
+logs/

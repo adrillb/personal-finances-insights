@@ -5,11 +5,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import date, datetime
 import io
+import logging
 import re
 from pathlib import Path
 
 import openpyxl
 import pandas as pd
+
+LOGGER = logging.getLogger(__name__)
 
 
 MONTH_INDEX = {
@@ -45,8 +48,11 @@ WorkbookSource = str | Path | bytes | None
 
 def resolve_workbook_path(workbook_path: str | Path | None = None) -> Path:
     """Resolve the workbook path from explicit or default locations."""
+    LOGGER.debug("Resolving workbook path. workbook_path=%s", workbook_path)
     if workbook_path is not None:
-        return Path(workbook_path)
+        resolved = Path(workbook_path)
+        LOGGER.debug("Using explicit workbook path: %s", resolved)
+        return resolved
 
     root = Path(__file__).resolve().parent.parent
     candidates = [
@@ -55,15 +61,26 @@ def resolve_workbook_path(workbook_path: str | Path | None = None) -> Path:
     ]
     for candidate in candidates:
         if candidate.exists():
+            LOGGER.debug("Resolved workbook path from defaults: %s", candidate)
             return candidate
+    LOGGER.warning("Workbook not found in default locations. Returning expected path: %s", candidates[0])
     return candidates[0]
 
 
 def _load_workbook(source: WorkbookSource = None) -> openpyxl.Workbook:
-    if isinstance(source, bytes):
-        return openpyxl.load_workbook(io.BytesIO(source), data_only=True)
-    path = resolve_workbook_path(source)
-    return openpyxl.load_workbook(path, data_only=True)
+    LOGGER.debug("Loading workbook. source_type=%s", type(source).__name__)
+    try:
+        if isinstance(source, bytes):
+            workbook = openpyxl.load_workbook(io.BytesIO(source), data_only=True)
+            LOGGER.debug("Workbook loaded from in-memory bytes. byte_size=%s", len(source))
+            return workbook
+        path = resolve_workbook_path(source)
+        workbook = openpyxl.load_workbook(path, data_only=True)
+        LOGGER.debug("Workbook loaded from path: %s", path)
+        return workbook
+    except Exception:
+        LOGGER.error("Failed to open workbook from source_type=%s", type(source).__name__, exc_info=True)
+        raise
 
 
 def _to_float(value: object, default: float = 0.0) -> float:
@@ -118,11 +135,21 @@ def _extract_month_columns(
         if month_value is None:
             continue
         months.append((col, month_value))
+    if not months:
+        LOGGER.warning(
+            "No month columns detected in worksheet=%s header_row=%s start_col=%s",
+            worksheet.title,
+            header_row,
+            start_col,
+        )
+    else:
+        LOGGER.debug("Detected %s month columns in worksheet=%s", len(months), worksheet.title)
     return months
 
 
 def load_raw_transactions(source: WorkbookSource = None) -> pd.DataFrame:
     """Load transaction-level rows from RAW sheet and normalize values."""
+    LOGGER.debug("load_raw_transactions started. source_type=%s", type(source).__name__)
     ws = _load_workbook(source)["RAW"]
     records: list[dict[str, object]] = []
 
@@ -148,16 +175,19 @@ def load_raw_transactions(source: WorkbookSource = None) -> pd.DataFrame:
 
     frame = pd.DataFrame(records)
     if frame.empty:
+        LOGGER.warning("RAW sheet produced no transaction rows.")
         return pd.DataFrame(columns=["date", "category", "amount", "signed_amount", "description"])
 
     frame["year"] = frame["date"].dt.year
     frame["month"] = frame["date"].dt.to_period("M").dt.to_timestamp()
     frame = frame.sort_values("date").reset_index(drop=True)
+    LOGGER.debug("load_raw_transactions completed. rows=%s cols=%s", len(frame), len(frame.columns))
     return frame
 
 
 def load_general_summary(source: WorkbookSource = None) -> pd.DataFrame:
     """Load monthly INCOME/EXPENSES/INVESTMENTS/SAVINGS totals from GENERAL."""
+    LOGGER.debug("load_general_summary started. source_type=%s", type(source).__name__)
     ws = _load_workbook(source)["GENERAL"]
     months = _extract_month_columns(ws, header_row=20, start_col=3)
     source_rows = [21, 22, 23, 24]
@@ -179,11 +209,16 @@ def load_general_summary(source: WorkbookSource = None) -> pd.DataFrame:
                 }
             )
 
-    return pd.DataFrame(records)
+    frame = pd.DataFrame(records)
+    if frame.empty:
+        LOGGER.warning("GENERAL summary produced no rows.")
+    LOGGER.debug("load_general_summary completed. rows=%s cols=%s", len(frame), len(frame.columns))
+    return frame
 
 
 def load_expenses_by_category(source: WorkbookSource = None) -> pd.DataFrame:
     """Load monthly expense totals by category from EXPENSES historical section."""
+    LOGGER.debug("load_expenses_by_category started. source_type=%s", type(source).__name__)
     ws = _load_workbook(source)["EXPENSES"]
     months = _extract_month_columns(ws, header_row=48, start_col=3)
 
@@ -196,6 +231,8 @@ def load_expenses_by_category(source: WorkbookSource = None) -> pd.DataFrame:
         if category_str.upper() == "TOTAL":
             continue
         categories.append(category_str)
+    if not categories:
+        LOGGER.warning("No expense categories found in EXPENSES historical section.")
 
     start_row = 50
     records: list[dict[str, object]] = []
@@ -214,11 +251,15 @@ def load_expenses_by_category(source: WorkbookSource = None) -> pd.DataFrame:
     frame = pd.DataFrame(records)
     if not frame.empty:
         frame = frame.sort_values(["month", "category"]).reset_index(drop=True)
+    else:
+        LOGGER.warning("EXPENSES by category produced no rows.")
+    LOGGER.debug("load_expenses_by_category completed. rows=%s cols=%s", len(frame), len(frame.columns))
     return frame
 
 
 def load_budget(source: WorkbookSource = None) -> pd.DataFrame:
     """Load projected vs actual budget values from EXPENSES current section."""
+    LOGGER.debug("load_budget started. source_type=%s", type(source).__name__)
     ws = _load_workbook(source)["EXPENSES"]
     year = int(_to_float(ws.cell(row=3, column=1).value, default=0)) or datetime.now().year
     month_name = str(ws.cell(row=4, column=1).value or "").strip().lower()[:3]
@@ -242,11 +283,16 @@ def load_budget(source: WorkbookSource = None) -> pd.DataFrame:
             }
         )
 
-    return pd.DataFrame(records)
+    frame = pd.DataFrame(records)
+    if frame.empty:
+        LOGGER.warning("Budget section produced no rows.")
+    LOGGER.debug("load_budget completed. rows=%s cols=%s", len(frame), len(frame.columns))
+    return frame
 
 
 def load_income_by_source(source: WorkbookSource = None) -> pd.DataFrame:
     """Load monthly income by source from INCOME historical section."""
+    LOGGER.debug("load_income_by_source started. source_type=%s", type(source).__name__)
     ws = _load_workbook(source)["INCOME"]
     months = _extract_month_columns(ws, header_row=23, start_col=3)
     source_rows = range(24, 29)
@@ -270,11 +316,16 @@ def load_income_by_source(source: WorkbookSource = None) -> pd.DataFrame:
                 }
             )
 
-    return pd.DataFrame(records)
+    frame = pd.DataFrame(records)
+    if frame.empty:
+        LOGGER.warning("INCOME by source produced no rows.")
+    LOGGER.debug("load_income_by_source completed. rows=%s cols=%s", len(frame), len(frame.columns))
+    return frame
 
 
 def load_category_averages(source: WorkbookSource = None) -> pd.DataFrame:
     """Load yearly average amounts by expense sub-category."""
+    LOGGER.debug("load_category_averages started. source_type=%s", type(source).__name__)
     ws = _load_workbook(source)["EXPENSES"]
     years: list[tuple[int, int]] = []
     for col in range(3, ws.max_column + 1):
@@ -286,6 +337,8 @@ def load_category_averages(source: WorkbookSource = None) -> pd.DataFrame:
             year = int(value.strip())
         if year is not None and 2000 <= year <= 2100:
             years.append((col, year))
+    if not years:
+        LOGGER.warning("No valid yearly columns found for category averages.")
 
     records: list[dict[str, object]] = []
     for row_idx in range(40, 45):
@@ -301,12 +354,17 @@ def load_category_averages(source: WorkbookSource = None) -> pd.DataFrame:
                 }
             )
 
-    return pd.DataFrame(records)
+    frame = pd.DataFrame(records)
+    if frame.empty:
+        LOGGER.warning("Category averages produced no rows.")
+    LOGGER.debug("load_category_averages completed. rows=%s cols=%s", len(frame), len(frame.columns))
+    return frame
 
 
 def load_all_data(source: WorkbookSource = None) -> WorkbookData:
     """Load all DataFrames required by the dashboard."""
-    return WorkbookData(
+    LOGGER.debug("load_all_data started. source_type=%s", type(source).__name__)
+    data = WorkbookData(
         raw_transactions=load_raw_transactions(source),
         general_summary=load_general_summary(source),
         expenses_by_category=load_expenses_by_category(source),
@@ -314,3 +372,16 @@ def load_all_data(source: WorkbookSource = None) -> WorkbookData:
         income_by_source=load_income_by_source(source),
         category_averages=load_category_averages(source),
     )
+    LOGGER.info(
+        (
+            "load_all_data succeeded. raw_transactions=%s general_summary=%s "
+            "expenses_by_category=%s budget=%s income_by_source=%s category_averages=%s"
+        ),
+        len(data.raw_transactions),
+        len(data.general_summary),
+        len(data.expenses_by_category),
+        len(data.budget),
+        len(data.income_by_source),
+        len(data.category_averages),
+    )
+    return data
