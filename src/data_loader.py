@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import date, datetime
+import io
 import re
 from pathlib import Path
-from typing import Iterable
 
 import openpyxl
 import pandas as pd
@@ -40,6 +40,9 @@ class WorkbookData:
     category_averages: pd.DataFrame
 
 
+WorkbookSource = str | Path | bytes | None
+
+
 def resolve_workbook_path(workbook_path: str | Path | None = None) -> Path:
     """Resolve the workbook path from explicit or default locations."""
     if workbook_path is not None:
@@ -56,8 +59,10 @@ def resolve_workbook_path(workbook_path: str | Path | None = None) -> Path:
     return candidates[0]
 
 
-def _load_workbook(workbook_path: str | Path | None = None) -> openpyxl.Workbook:
-    path = resolve_workbook_path(workbook_path)
+def _load_workbook(source: WorkbookSource = None) -> openpyxl.Workbook:
+    if isinstance(source, bytes):
+        return openpyxl.load_workbook(io.BytesIO(source), data_only=True)
+    path = resolve_workbook_path(source)
     return openpyxl.load_workbook(path, data_only=True)
 
 
@@ -116,9 +121,9 @@ def _extract_month_columns(
     return months
 
 
-def load_raw_transactions(workbook_path: str | Path | None = None) -> pd.DataFrame:
+def load_raw_transactions(source: WorkbookSource = None) -> pd.DataFrame:
     """Load transaction-level rows from RAW sheet and normalize values."""
-    ws = _load_workbook(workbook_path)["RAW"]
+    ws = _load_workbook(source)["RAW"]
     records: list[dict[str, object]] = []
 
     for row in ws.iter_rows(min_row=2, max_col=4, values_only=True):
@@ -151,9 +156,9 @@ def load_raw_transactions(workbook_path: str | Path | None = None) -> pd.DataFra
     return frame
 
 
-def load_general_summary(workbook_path: str | Path | None = None) -> pd.DataFrame:
+def load_general_summary(source: WorkbookSource = None) -> pd.DataFrame:
     """Load monthly INCOME/EXPENSES/INVESTMENTS/SAVINGS totals from GENERAL."""
-    ws = _load_workbook(workbook_path)["GENERAL"]
+    ws = _load_workbook(source)["GENERAL"]
     months = _extract_month_columns(ws, header_row=20, start_col=3)
     source_rows = [21, 22, 23, 24]
     records: list[dict[str, object]] = []
@@ -177,9 +182,9 @@ def load_general_summary(workbook_path: str | Path | None = None) -> pd.DataFram
     return pd.DataFrame(records)
 
 
-def load_expenses_by_category(workbook_path: str | Path | None = None) -> pd.DataFrame:
+def load_expenses_by_category(source: WorkbookSource = None) -> pd.DataFrame:
     """Load monthly expense totals by category from EXPENSES historical section."""
-    ws = _load_workbook(workbook_path)["EXPENSES"]
+    ws = _load_workbook(source)["EXPENSES"]
     months = _extract_month_columns(ws, header_row=48, start_col=3)
 
     categories: list[str] = []
@@ -212,9 +217,9 @@ def load_expenses_by_category(workbook_path: str | Path | None = None) -> pd.Dat
     return frame
 
 
-def load_budget(workbook_path: str | Path | None = None) -> pd.DataFrame:
+def load_budget(source: WorkbookSource = None) -> pd.DataFrame:
     """Load projected vs actual budget values from EXPENSES current section."""
-    ws = _load_workbook(workbook_path)["EXPENSES"]
+    ws = _load_workbook(source)["EXPENSES"]
     year = int(_to_float(ws.cell(row=3, column=1).value, default=0)) or datetime.now().year
     month_name = str(ws.cell(row=4, column=1).value or "").strip().lower()[:3]
     month = MONTH_INDEX.get(month_name, 1)
@@ -240,9 +245,9 @@ def load_budget(workbook_path: str | Path | None = None) -> pd.DataFrame:
     return pd.DataFrame(records)
 
 
-def load_income_by_source(workbook_path: str | Path | None = None) -> pd.DataFrame:
+def load_income_by_source(source: WorkbookSource = None) -> pd.DataFrame:
     """Load monthly income by source from INCOME historical section."""
-    ws = _load_workbook(workbook_path)["INCOME"]
+    ws = _load_workbook(source)["INCOME"]
     months = _extract_month_columns(ws, header_row=23, start_col=3)
     source_rows = range(24, 29)
     records: list[dict[str, object]] = []
@@ -268,9 +273,9 @@ def load_income_by_source(workbook_path: str | Path | None = None) -> pd.DataFra
     return pd.DataFrame(records)
 
 
-def load_category_averages(workbook_path: str | Path | None = None) -> pd.DataFrame:
+def load_category_averages(source: WorkbookSource = None) -> pd.DataFrame:
     """Load yearly average amounts by expense sub-category."""
-    ws = _load_workbook(workbook_path)["EXPENSES"]
+    ws = _load_workbook(source)["EXPENSES"]
     years: list[tuple[int, int]] = []
     for col in range(3, ws.max_column + 1):
         value = ws.cell(row=38, column=col).value
@@ -299,13 +304,13 @@ def load_category_averages(workbook_path: str | Path | None = None) -> pd.DataFr
     return pd.DataFrame(records)
 
 
-def load_all_data(workbook_path: str | Path | None = None) -> WorkbookData:
+def load_all_data(source: WorkbookSource = None) -> WorkbookData:
     """Load all DataFrames required by the dashboard."""
     return WorkbookData(
-        raw_transactions=load_raw_transactions(workbook_path),
-        general_summary=load_general_summary(workbook_path),
-        expenses_by_category=load_expenses_by_category(workbook_path),
-        budget=load_budget(workbook_path),
-        income_by_source=load_income_by_source(workbook_path),
-        category_averages=load_category_averages(workbook_path),
+        raw_transactions=load_raw_transactions(source),
+        general_summary=load_general_summary(source),
+        expenses_by_category=load_expenses_by_category(source),
+        budget=load_budget(source),
+        income_by_source=load_income_by_source(source),
+        category_averages=load_category_averages(source),
     )
