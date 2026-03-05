@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from datetime import datetime
+import logging
 import os
 from pathlib import Path
 
@@ -14,7 +15,6 @@ from dotenv import load_dotenv
 
 from src.data_loader import load_all_data, resolve_workbook_path
 from src.cloud_connector import download_sheet_as_xlsx
-from src.monefy_sync import run_sync
 from src.insights import (
     average_daily_spending,
     budget_adherence,
@@ -29,9 +29,16 @@ from src.insights import (
     spending_breakdown,
     top_categories,
 )
+from src.logging_config import setup_logging
+from src.monefy_sync import run_sync
 
+
+LOG_PATH = setup_logging()
+LOGGER = logging.getLogger(__name__)
+LOGGER.info("Starting Personal Finance Insights app.")
 
 load_dotenv()
+LOGGER.debug("Environment loaded. log_path=%s", LOG_PATH)
 
 
 def _format_currency(value: float) -> str:
@@ -59,16 +66,21 @@ def _resolve_credentials_path() -> Path:
 
 
 def _cloud_is_configured() -> bool:
-    return bool(os.getenv("SPREADSHEET_NAME", "").strip()) and _resolve_credentials_path().exists()
+    configured = bool(os.getenv("SPREADSHEET_NAME", "").strip()) and _resolve_credentials_path().exists()
+    if not configured:
+        LOGGER.debug("Cloud configuration missing spreadsheet name or credentials.")
+    return configured
 
 
 @st.cache_data(show_spinner=False)
 def _load_cached_local_data(workbook_path: str):
+    LOGGER.debug("Loading local workbook. workbook_path=%s", workbook_path)
     return load_all_data(workbook_path)
 
 
 @st.cache_data(show_spinner=False)
 def _load_cached_cloud_data(workbook_bytes: bytes):
+    LOGGER.debug("Loading cloud workbook bytes. size=%s", len(workbook_bytes))
     return load_all_data(workbook_bytes)
 
 
@@ -81,13 +93,16 @@ data_mode = st.sidebar.selectbox(
     options=["Auto (Cloud + Local fallback)", "Local only"],
     index=0,
 )
+LOGGER.info("Selected workbook source mode: %s", data_mode)
 
 if st.sidebar.button("Refresh from Cloud"):
+    LOGGER.info("User clicked Refresh from Cloud.")
     st.cache_data.clear()
     st.session_state["cloud_message"] = "Cloud cache cleared. Data refreshed."
     st.rerun()
 
 if st.sidebar.button("Sync Monefy"):
+    LOGGER.info("User clicked Sync Monefy.")
     try:
         sync_summary = run_sync(
             folder=os.getenv("MONEFY_FOLDER"),
@@ -100,8 +115,15 @@ if st.sidebar.button("Sync Monefy"):
             f"{sync_summary['imported_rows']} row(s), "
             f"{sync_summary['skipped_files']} skipped."
         )
+        LOGGER.info(
+            "Monefy sync done. processed_files=%s imported_rows=%s skipped_files=%s",
+            sync_summary["processed_files"],
+            sync_summary["imported_rows"],
+            sync_summary["skipped_files"],
+        )
         st.rerun()
     except Exception as exc:
+        LOGGER.error("Monefy sync failed.", exc_info=True)
         st.sidebar.error(f"Monefy sync failed: {exc}")
 
 if "cloud_message" in st.session_state:
@@ -110,21 +132,35 @@ if "cloud_message" in st.session_state:
 workbook_path = str(resolve_workbook_path())
 loaded_from = "Local workbook"
 cloud_error: str | None = None
+LOGGER.debug("Resolved local workbook path: %s", workbook_path)
 
 data = None
 if data_mode != "Local only" and _cloud_is_configured():
+    LOGGER.info("Trying cloud workbook download.")
     try:
         cloud_bytes = download_sheet_as_xlsx(os.getenv("SPREADSHEET_NAME"))
         data = _load_cached_cloud_data(cloud_bytes)
         loaded_from = "Google Sheet (cloud export)"
+        LOGGER.info("Cloud workbook loaded successfully.")
     except Exception as exc:
         cloud_error = str(exc)
+        LOGGER.error("Cloud workbook load failed; falling back to local.", exc_info=True)
+        LOGGER.warning("Cloud fallback to local workbook activated.")
+elif data_mode != "Local only":
+    LOGGER.warning("Cloud mode selected but cloud is not configured. Using local workbook.")
 
 if data is None:
-    data = _load_cached_local_data(workbook_path)
+    LOGGER.info("Loading local workbook.")
+    try:
+        data = _load_cached_local_data(workbook_path)
+        LOGGER.info("Local workbook loaded successfully.")
+    except Exception:
+        LOGGER.error("Local workbook load failed.", exc_info=True)
+        raise
 
 st.sidebar.caption(f"Loaded from: {loaded_from}")
 if cloud_error:
+    LOGGER.warning("Cloud fallback details: %s", cloud_error)
     st.sidebar.warning(f"Cloud fallback used local file: {cloud_error}")
 
 general_summary = data.general_summary
@@ -133,6 +169,24 @@ raw_transactions = data.raw_transactions
 budget = data.budget
 income_by_source = data.income_by_source
 category_averages = data.category_averages
+LOGGER.info(
+    (
+        "Dataset sizes loaded. general_summary=%sx%s expenses_by_category=%sx%s "
+        "raw_transactions=%sx%s budget=%sx%s income_by_source=%sx%s category_averages=%sx%s"
+    ),
+    len(general_summary),
+    len(general_summary.columns),
+    len(expenses_by_category),
+    len(expenses_by_category.columns),
+    len(raw_transactions),
+    len(raw_transactions.columns),
+    len(budget),
+    len(budget.columns),
+    len(income_by_source),
+    len(income_by_source.columns),
+    len(category_averages),
+    len(category_averages.columns),
+)
 
 month_min, month_max = _month_bounds(general_summary["month"])
 
