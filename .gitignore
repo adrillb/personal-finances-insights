@@ -1,5 +1,6 @@
 # Virtual environment
 .venv/
+.personal-finances/
 
 # Python bytecode
 __pycache__/
