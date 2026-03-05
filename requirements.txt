@@ -2,3 +2,6 @@ pandas
 openpyxl
 streamlit
 plotly
+gspread
+google-auth
+python-dotenv

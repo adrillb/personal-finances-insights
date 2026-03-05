@@ -235,6 +235,60 @@ To switch from mock to real data:
 
 If your structure differs, update parsing offsets/ranges in `src/data_loader.py`.
 
+## Google Sheets Cloud Setup
+
+You can run the dashboard using a Google Sheet as the primary source and keep a local fallback.
+
+### 1) Create Google Cloud credentials
+
+1. Open [Google Cloud Console](https://console.cloud.google.com)
+2. Create/select a project
+3. Enable:
+   - Google Sheets API
+   - Google Drive API
+4. Create a Service Account
+5. Create and download a JSON key for that Service Account
+6. Save it in the project root as:
+
+```text
+credentials.json
+```
+
+7. Share your Google Sheet with the Service Account email and grant **Editor** permission
+
+### 2) Configure environment variables
+
+Create a `.env` file in the project root (see `.env.example`):
+
+```bash
+GOOGLE_CREDENTIALS_PATH=credentials.json
+SPREADSHEET_NAME=Personal finances
+MONEFY_FOLDER=/mnt/c/Users/TU_USUARIO/OneDrive/Monefy
+```
+
+### 3) Run the app
+
+```bash
+streamlit run app.py
+```
+
+The app will try cloud loading first and fall back to local workbook loading if cloud config is missing or fails.
+
+## Monefy CSV Sync (OneDrive Drop Folder)
+
+This project supports a lightweight Monefy automation flow:
+
+1. Export CSV from Monefy on mobile
+2. Share the CSV to your OneDrive folder (`MONEFY_FOLDER`)
+3. In the Streamlit sidebar, click **Sync Monefy**
+4. The app will:
+   - Detect unprocessed CSV files
+   - Normalize their data
+   - Append rows into the `MonefyCSV` sheet in your Google Sheet
+   - Track processed files in `data/.monefy_processed.json` to prevent duplicates
+
+Use **Refresh from Cloud** in the sidebar to clear cache and force a fresh cloud download.
+
 ## Common Troubleshooting
 
 ### Streamlit command not found

@@ -24,3 +24,6 @@ Thumbs.db
 
 # Sensitive data - uncomment if you add your real file
 data/*.xlsx
+credentials.json
+.env
+data/.monefy_processed.json

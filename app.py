@@ -3,13 +3,18 @@
 from __future__ import annotations
 
 from datetime import datetime
+import os
+from pathlib import Path
 
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
+from dotenv import load_dotenv
 
 from src.data_loader import load_all_data, resolve_workbook_path
+from src.cloud_connector import download_sheet_as_xlsx
+from src.monefy_sync import run_sync
 from src.insights import (
     average_daily_spending,
     budget_adherence,
@@ -26,6 +31,9 @@ from src.insights import (
 )
 
 
+load_dotenv()
+
+
 def _format_currency(value: float) -> str:
     return f"EUR {value:,.2f}"
 
@@ -38,16 +46,86 @@ def _month_bounds(months: pd.Series) -> tuple[pd.Timestamp, pd.Timestamp]:
     return pd.Timestamp(min(month_values)), pd.Timestamp(max(month_values))
 
 
+def _project_root() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def _resolve_credentials_path() -> Path:
+    raw_path = os.getenv("GOOGLE_CREDENTIALS_PATH", "credentials.json")
+    credentials_path = Path(raw_path)
+    if credentials_path.is_absolute():
+        return credentials_path
+    return _project_root() / credentials_path
+
+
+def _cloud_is_configured() -> bool:
+    return bool(os.getenv("SPREADSHEET_NAME", "").strip()) and _resolve_credentials_path().exists()
+
+
 @st.cache_data(show_spinner=False)
-def _load_cached_data(workbook_path: str):
+def _load_cached_local_data(workbook_path: str):
     return load_all_data(workbook_path)
+
+
+@st.cache_data(show_spinner=False)
+def _load_cached_cloud_data(workbook_bytes: bytes):
+    return load_all_data(workbook_bytes)
 
 
 st.set_page_config(page_title="Personal Finance Insights", layout="wide")
 st.title("Personal Finance Insights")
 
+st.sidebar.header("Data Source")
+data_mode = st.sidebar.selectbox(
+    "Workbook source",
+    options=["Auto (Cloud + Local fallback)", "Local only"],
+    index=0,
+)
+
+if st.sidebar.button("Refresh from Cloud"):
+    st.cache_data.clear()
+    st.session_state["cloud_message"] = "Cloud cache cleared. Data refreshed."
+    st.rerun()
+
+if st.sidebar.button("Sync Monefy"):
+    try:
+        sync_summary = run_sync(
+            folder=os.getenv("MONEFY_FOLDER"),
+            spreadsheet_name=os.getenv("SPREADSHEET_NAME"),
+        )
+        st.cache_data.clear()
+        st.session_state["cloud_message"] = (
+            "Monefy sync completed: "
+            f"{sync_summary['processed_files']} file(s), "
+            f"{sync_summary['imported_rows']} row(s), "
+            f"{sync_summary['skipped_files']} skipped."
+        )
+        st.rerun()
+    except Exception as exc:
+        st.sidebar.error(f"Monefy sync failed: {exc}")
+
+if "cloud_message" in st.session_state:
+    st.sidebar.success(st.session_state.pop("cloud_message"))
+
 workbook_path = str(resolve_workbook_path())
-data = _load_cached_data(workbook_path)
+loaded_from = "Local workbook"
+cloud_error: str | None = None
+
+data = None
+if data_mode != "Local only" and _cloud_is_configured():
+    try:
+        cloud_bytes = download_sheet_as_xlsx(os.getenv("SPREADSHEET_NAME"))
+        data = _load_cached_cloud_data(cloud_bytes)
+        loaded_from = "Google Sheet (cloud export)"
+    except Exception as exc:
+        cloud_error = str(exc)
+
+if data is None:
+    data = _load_cached_local_data(workbook_path)
+
+st.sidebar.caption(f"Loaded from: {loaded_from}")
+if cloud_error:
+    st.sidebar.warning(f"Cloud fallback used local file: {cloud_error}")
 
 general_summary = data.general_summary
 expenses_by_category = data.expenses_by_category
