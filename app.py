@@ -3,6 +3,12 @@
 from __future__ import annotations
 
 from datetime import datetime
+<<<<<<< Updated upstream
+=======
+import logging
+import os
+from pathlib import Path
+>>>>>>> Stashed changes
 
 import pandas as pd
 import plotly.express as px
@@ -10,6 +16,10 @@ import plotly.graph_objects as go
 import streamlit as st
 
 from src.data_loader import load_all_data, resolve_workbook_path
+<<<<<<< Updated upstream
+=======
+from src.cloud_connector import download_sheet_as_xlsx
+>>>>>>> Stashed changes
 from src.insights import (
     average_daily_spending,
     budget_adherence,
@@ -24,8 +34,21 @@ from src.insights import (
     spending_breakdown,
     top_categories,
 )
+from src.logging_config import setup_logging
+from src.monefy_sync import run_sync
 
 
+<<<<<<< Updated upstream
+=======
+LOG_PATH = setup_logging()
+LOGGER = logging.getLogger(__name__)
+LOGGER.info("Starting Personal Finance Insights app")
+
+load_dotenv()
+LOGGER.debug("Environment loaded. Log file path: %s", LOG_PATH)
+
+
+>>>>>>> Stashed changes
 def _format_currency(value: float) -> str:
     return f"EUR {value:,.2f}"
 
@@ -38,6 +61,7 @@ def _month_bounds(months: pd.Series) -> tuple[pd.Timestamp, pd.Timestamp]:
     return pd.Timestamp(min(month_values)), pd.Timestamp(max(month_values))
 
 
+<<<<<<< Updated upstream
 @st.cache_data(show_spinner=False)
 def _load_cached_data(workbook_path: str):
     return load_all_data(workbook_path)
@@ -48,6 +72,118 @@ st.title("Personal Finance Insights")
 
 workbook_path = str(resolve_workbook_path())
 data = _load_cached_data(workbook_path)
+=======
+def _project_root() -> Path:
+    return Path(__file__).resolve().parent
+
+
+def _resolve_credentials_path() -> Path:
+    raw_path = os.getenv("GOOGLE_CREDENTIALS_PATH", "credentials.json")
+    credentials_path = Path(raw_path)
+    if credentials_path.is_absolute():
+        return credentials_path
+    return _project_root() / credentials_path
+
+
+def _cloud_is_configured() -> bool:
+    configured = bool(os.getenv("SPREADSHEET_NAME", "").strip()) and _resolve_credentials_path().exists()
+    if not configured:
+        LOGGER.debug("Cloud configuration incomplete. Missing spreadsheet name or credentials file.")
+    return configured
+
+
+@st.cache_data(show_spinner=False)
+def _load_cached_local_data(workbook_path: str):
+    LOGGER.debug("Loading workbook from local source: %s", workbook_path)
+    return load_all_data(workbook_path)
+
+
+@st.cache_data(show_spinner=False)
+def _load_cached_cloud_data(workbook_bytes: bytes):
+    LOGGER.debug("Loading workbook from cloud bytes. Payload size=%s bytes", len(workbook_bytes))
+    return load_all_data(workbook_bytes)
+
+
+st.set_page_config(page_title="Personal Finance Insights", layout="wide")
+st.title("Personal Finance Insights")
+
+st.sidebar.header("Data Source")
+data_mode = st.sidebar.selectbox(
+    "Workbook source",
+    options=["Auto (Cloud + Local fallback)", "Local only"],
+    index=0,
+)
+LOGGER.info("Selected data mode: %s", data_mode)
+
+if st.sidebar.button("Refresh from Cloud"):
+    LOGGER.info("User requested cloud cache refresh.")
+    st.cache_data.clear()
+    st.session_state["cloud_message"] = "Cloud cache cleared. Data refreshed."
+    st.rerun()
+
+if st.sidebar.button("Sync Monefy"):
+    LOGGER.info("User requested Monefy sync.")
+    LOGGER.debug("Starting Monefy synchronization workflow.")
+    try:
+        sync_summary = run_sync(
+            folder=os.getenv("MONEFY_FOLDER"),
+            spreadsheet_name=os.getenv("SPREADSHEET_NAME"),
+        )
+        st.cache_data.clear()
+        st.session_state["cloud_message"] = (
+            "Monefy sync completed: "
+            f"{sync_summary['processed_files']} file(s), "
+            f"{sync_summary['imported_rows']} row(s), "
+            f"{sync_summary['skipped_files']} skipped."
+        )
+        LOGGER.info(
+            "Monefy sync completed. processed_files=%s imported_rows=%s skipped_files=%s",
+            sync_summary["processed_files"],
+            sync_summary["imported_rows"],
+            sync_summary["skipped_files"],
+        )
+        st.rerun()
+    except Exception as exc:
+        LOGGER.error("Monefy sync failed: %s", exc, exc_info=True)
+        st.sidebar.error(f"Monefy sync failed: {exc}")
+
+if "cloud_message" in st.session_state:
+    st.sidebar.success(st.session_state.pop("cloud_message"))
+
+workbook_path = str(resolve_workbook_path())
+loaded_from = "Local workbook"
+cloud_error: str | None = None
+LOGGER.debug("Resolved local workbook path: %s", workbook_path)
+
+data = None
+if data_mode != "Local only" and _cloud_is_configured():
+    LOGGER.info("Attempting to load workbook from Google Sheets export.")
+    try:
+        cloud_bytes = download_sheet_as_xlsx(os.getenv("SPREADSHEET_NAME"))
+        data = _load_cached_cloud_data(cloud_bytes)
+        loaded_from = "Google Sheet (cloud export)"
+        LOGGER.info("Workbook loaded successfully from cloud export.")
+    except Exception as exc:
+        cloud_error = str(exc)
+        LOGGER.error("Cloud load failed. Falling back to local workbook: %s", exc, exc_info=True)
+        LOGGER.warning("Cloud load failed; local fallback will be used.")
+elif data_mode != "Local only":
+    LOGGER.warning("Cloud mode available but not configured. Falling back to local workbook.")
+
+if data is None:
+    LOGGER.info("Loading workbook from local file.")
+    try:
+        data = _load_cached_local_data(workbook_path)
+        LOGGER.info("Workbook loaded successfully from local file.")
+    except Exception as exc:
+        LOGGER.error("Local workbook load failed: %s", exc, exc_info=True)
+        raise
+
+st.sidebar.caption(f"Loaded from: {loaded_from}")
+if cloud_error:
+    LOGGER.warning("Cloud fallback used local file. Error: %s", cloud_error)
+    st.sidebar.warning(f"Cloud fallback used local file: {cloud_error}")
+>>>>>>> Stashed changes
 
 general_summary = data.general_summary
 expenses_by_category = data.expenses_by_category
@@ -55,6 +191,36 @@ raw_transactions = data.raw_transactions
 budget = data.budget
 income_by_source = data.income_by_source
 category_averages = data.category_averages
+LOGGER.debug(
+    (
+        "Dataframes loaded (rows only). general=%s expenses=%s transactions=%s "
+        "budget=%s income=%s averages=%s"
+    ),
+    len(general_summary),
+    len(expenses_by_category),
+    len(raw_transactions),
+    len(budget),
+    len(income_by_source),
+    len(category_averages),
+)
+LOGGER.info(
+    (
+        "Dataset sizes after load. general=%sx%s expenses=%sx%s transactions=%sx%s "
+        "budget=%sx%s income=%sx%s averages=%sx%s"
+    ),
+    len(general_summary),
+    len(general_summary.columns),
+    len(expenses_by_category),
+    len(expenses_by_category.columns),
+    len(raw_transactions),
+    len(raw_transactions.columns),
+    len(budget),
+    len(budget.columns),
+    len(income_by_source),
+    len(income_by_source.columns),
+    len(category_averages),
+    len(category_averages.columns),
+)
 
 month_min, month_max = _month_bounds(general_summary["month"])
 

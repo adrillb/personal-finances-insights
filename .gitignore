@@ -23,4 +23,12 @@ Thumbs.db
 .streamlit/
 
 # Sensitive data - uncomment if you add your real file
+<<<<<<< Updated upstream
 data/*.xlsx
+=======
+data/*.xlsx
+credentials.json
+.env
+data/.monefy_processed.json
+logs/
+>>>>>>> Stashed changes
