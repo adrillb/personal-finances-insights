@@ -1,6 +1,6 @@
 # Personal Finance Insights Dashboard
 
-Interactive Streamlit dashboard to analyze personal finance data from an Excel workbook.
+Interactive personal finance dashboard to analyze data from an Excel workbook.
 
 This project ingests a workbook with the same structure as `data/Mock Personal finances.xlsx`, normalizes the key sheets, computes finance metrics, and presents them in a filterable dashboard.
 
@@ -21,6 +21,10 @@ This project ingests a workbook with the same structure as `data/Mock Personal f
 ```text
 Personal Finances/
 ├── app.py
+├── app_flask.py
+├── run.py
+├── templates/
+│   └── dashboard.html
 ├── requirements.txt
 ├── README.md
 ├── data/
@@ -34,10 +38,23 @@ Personal Finances/
 ## Tech Stack
 
 - Python 3.12+
-- `streamlit` for UI
+- `streamlit` and `flask` for UI modes
 - `pandas` for data wrangling
 - `plotly` for charts
 - `openpyxl` for Excel parsing
+
+## Interface Modes
+
+You can run the app with two different interfaces:
+
+- **Flask mode (`UI_MODE=flask`)**:
+  - Lightweight and Raspberry Pi friendly
+  - Modern SPA interface (`templates/dashboard.html`)
+  - Best option when Streamlit fails to launch on your device
+- **Streamlit mode (`UI_MODE=streamlit`)**:
+  - Original Streamlit dashboard (`app.py`)
+
+Set your preferred mode in `.env`.
 
 ## Quick Start
 
@@ -68,17 +85,35 @@ You can either:
 - Keep this filename, or
 - Replace the file contents with your own workbook preserving the same structure.
 
-### 4) Run the dashboard
+### 4) Choose interface mode
+
+Set `UI_MODE` in your `.env` file:
 
 ```bash
-streamlit run app.py
+UI_MODE=flask
+FLASK_PORT=8080
 ```
 
-Then open the local URL shown by Streamlit (typically `http://localhost:8501`).
+For Streamlit:
+
+```bash
+UI_MODE=streamlit
+STREAMLIT_PORT=8501
+```
+
+### 5) Run the dashboard
+
+```bash
+python run.py
+```
+
+Then open the local URL:
+- Flask mode: typically `http://localhost:8080`
+- Streamlit mode: typically `http://localhost:8501`
 
 ## Dashboard Sections
 
-`app.py` renders 6 tabs:
+Both UI modes render the same 6 sections:
 
 1. **Overview**
    - KPI cards: total income, expenses, net cash flow, savings rate
@@ -231,7 +266,7 @@ To switch from mock to real data:
 
 1. Back up your original file.
 2. Replace `data/Mock Personal finances.xlsx` with your real workbook (same structure).
-3. Restart Streamlit.
+3. Restart the app (`python run.py`).
 
 If your structure differs, update parsing offsets/ranges in `src/data_loader.py`.
 
@@ -264,12 +299,14 @@ Create a `.env` file in the project root (see `.env.example`):
 GOOGLE_CREDENTIALS_PATH=credentials.json
 SPREADSHEET_NAME=Personal finances
 MONEFY_FOLDER=/mnt/c/Users/TU_USUARIO/OneDrive/Monefy
+UI_MODE=flask
+FLASK_PORT=8080
 ```
 
 ### 3) Run the app
 
 ```bash
-streamlit run app.py
+python run.py
 ```
 
 The app will try cloud loading first and fall back to local workbook loading if cloud config is missing or fails.
@@ -280,7 +317,7 @@ This project supports a lightweight Monefy automation flow:
 
 1. Export CSV from Monefy on mobile
 2. Share the CSV to your OneDrive folder (`MONEFY_FOLDER`)
-3. In the Streamlit sidebar, click **Sync Monefy**
+3. In the dashboard sidebar, click **Sync Monefy**
 4. The app will:
    - Detect unprocessed CSV files
    - Normalize their data
@@ -293,7 +330,14 @@ Use **Refresh from Cloud** in the sidebar to clear cache and force a fresh cloud
 
 ### Streamlit command not found
 
-Run through the virtual environment:
+If you are using Streamlit mode, run through the virtual environment:
+
+```bash
+source .venv/bin/activate
+UI_MODE=streamlit python run.py
+```
+
+Or run Streamlit directly:
 
 ```bash
 .venv/bin/streamlit run app.py
@@ -317,10 +361,17 @@ Check:
 
 ### Port already in use
 
-Use another port:
+Use another port in `.env`:
 
 ```bash
-streamlit run app.py --server.port 8503
+FLASK_PORT=8081
+STREAMLIT_PORT=8503
+```
+
+Then rerun:
+
+```bash
+python run.py
 ```
 
 ## Extending the Project

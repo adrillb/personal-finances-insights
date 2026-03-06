@@ -1,0 +1,767 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Personal Finance Dashboard</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.plot.ly/plotly-2.35.2.min.js"></script>
+    <script>
+      tailwind.config = {
+        theme: {
+          extend: {
+            fontFamily: {
+              sans: ["Inter", "system-ui", "sans-serif"],
+            },
+          },
+        },
+      };
+    </script>
+  </head>
+  <body class="bg-slate-950 text-slate-100 antialiased">
+    <div class="flex min-h-screen">
+      <aside class="w-72 border-r border-slate-800 bg-slate-900/80 p-5">
+        <div class="mb-6">
+          <h1 class="text-xl font-semibold tracking-tight">Personal Finance</h1>
+          <p class="mt-1 text-sm text-slate-400">Flask dashboard mode</p>
+        </div>
+
+        <section class="mb-6 space-y-3">
+          <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-400">Data source</h2>
+          <select
+            id="sourceSelect"
+            class="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm"
+          >
+            <option value="auto">Auto (Cloud + Local fallback)</option>
+            <option value="local">Local only</option>
+          </select>
+          <p id="loadedFrom" class="text-xs text-slate-400"></p>
+          <p id="cloudWarning" class="hidden rounded-md border border-amber-700 bg-amber-900/40 p-2 text-xs text-amber-200"></p>
+        </section>
+
+        <section class="mb-6 space-y-2">
+          <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-400">Actions</h2>
+          <button
+            id="refreshBtn"
+            class="w-full rounded-lg border border-slate-700 bg-slate-800 px-3 py-2 text-sm font-medium transition hover:bg-slate-700"
+          >
+            Refresh from Cloud
+          </button>
+          <button
+            id="syncBtn"
+            class="w-full rounded-lg bg-indigo-600 px-3 py-2 text-sm font-medium transition hover:bg-indigo-500"
+          >
+            Sync Monefy
+          </button>
+          <p id="actionStatus" class="text-xs text-slate-300"></p>
+        </section>
+
+        <section class="mb-6 space-y-3">
+          <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-400">Filters</h2>
+          <div>
+            <label for="startMonth" class="mb-1 block text-xs text-slate-400">Start month</label>
+            <select id="startMonth" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm"></select>
+          </div>
+          <div>
+            <label for="endMonth" class="mb-1 block text-xs text-slate-400">End month</label>
+            <select id="endMonth" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm"></select>
+          </div>
+          <div>
+            <label for="yearSelect" class="mb-1 block text-xs text-slate-400">Year</label>
+            <select id="yearSelect" class="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm"></select>
+          </div>
+          <div>
+            <div class="mb-1 flex items-center justify-between">
+              <label for="categoriesSelect" class="block text-xs text-slate-400">Categories</label>
+              <div class="space-x-2">
+                <button id="selectAllCategories" class="text-xs text-indigo-300 hover:text-indigo-200">All</button>
+                <button id="clearCategories" class="text-xs text-slate-400 hover:text-slate-300">Clear</button>
+              </div>
+            </div>
+            <select
+              id="categoriesSelect"
+              multiple
+              class="h-40 w-full rounded-lg border border-slate-700 bg-slate-900 px-2 py-2 text-sm"
+            ></select>
+          </div>
+          <button
+            id="applyFilters"
+            class="w-full rounded-lg bg-sky-600 px-3 py-2 text-sm font-semibold transition hover:bg-sky-500"
+          >
+            Apply filters
+          </button>
+        </section>
+
+        <section class="space-y-2">
+          <h2 class="text-xs font-semibold uppercase tracking-wide text-slate-400">Search</h2>
+          <input
+            id="searchInput"
+            type="text"
+            placeholder="Search transactions..."
+            class="w-full rounded-lg border border-slate-700 bg-slate-900 px-3 py-2 text-sm placeholder:text-slate-500"
+          />
+        </section>
+      </aside>
+
+      <main class="flex-1 overflow-y-auto px-8 py-6">
+        <div class="mb-5">
+          <h2 class="text-2xl font-semibold tracking-tight">Financial Insights</h2>
+          <p id="rangeCaption" class="mt-1 text-sm text-slate-400"></p>
+        </div>
+
+        <div id="tabBar" class="mb-6 flex flex-wrap gap-2">
+          <button data-tab="overview" class="tab-btn rounded-lg bg-indigo-600 px-4 py-2 text-sm font-medium">Overview</button>
+          <button data-tab="spending" class="tab-btn rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium">Spending Analysis</button>
+          <button data-tab="budget" class="tab-btn rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium">Budget vs Actual</button>
+          <button data-tab="income" class="tab-btn rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium">Income</button>
+          <button data-tab="savings" class="tab-btn rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium">Savings & Investments</button>
+          <button data-tab="transactions" class="tab-btn rounded-lg bg-slate-800 px-4 py-2 text-sm font-medium">Transaction Explorer</button>
+        </div>
+
+        <section id="panel-overview" class="tab-panel space-y-6">
+          <div class="grid grid-cols-1 gap-4 md:grid-cols-2 xl:grid-cols-4">
+            <article class="rounded-xl border border-slate-800 bg-slate-900 p-4">
+              <p class="text-sm text-slate-400">Total Income</p>
+              <p id="kpiIncome" class="mt-1 text-xl font-semibold text-emerald-300"></p>
+            </article>
+            <article class="rounded-xl border border-slate-800 bg-slate-900 p-4">
+              <p class="text-sm text-slate-400">Total Expenses</p>
+              <p id="kpiExpenses" class="mt-1 text-xl font-semibold text-rose-300"></p>
+            </article>
+            <article class="rounded-xl border border-slate-800 bg-slate-900 p-4">
+              <p class="text-sm text-slate-400">Net Cash Flow</p>
+              <p id="kpiNet" class="mt-1 text-xl font-semibold text-sky-300"></p>
+            </article>
+            <article class="rounded-xl border border-slate-800 bg-slate-900 p-4">
+              <p class="text-sm text-slate-400">Savings Rate</p>
+              <p id="kpiSavingsRate" class="mt-1 text-xl font-semibold text-violet-300"></p>
+            </article>
+            <article class="rounded-xl border border-slate-800 bg-slate-900 p-4">
+              <p class="text-sm text-slate-400">Average Daily Spending</p>
+              <p id="kpiAvgDaily" class="mt-1 text-xl font-semibold text-amber-300"></p>
+            </article>
+            <article class="rounded-xl border border-slate-800 bg-slate-900 p-4">
+              <p class="text-sm text-slate-400">Total Investments</p>
+              <p id="kpiInvestments" class="mt-1 text-xl font-semibold text-cyan-300"></p>
+            </article>
+          </div>
+          <div id="overviewChart" class="rounded-xl border border-slate-800 bg-slate-900 p-2"></div>
+        </section>
+
+        <section id="panel-spending" class="tab-panel hidden space-y-6">
+          <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <div id="spendingPieChart" class="rounded-xl border border-slate-800 bg-slate-900 p-2"></div>
+            <div id="topCategoriesChart" class="rounded-xl border border-slate-800 bg-slate-900 p-2"></div>
+          </div>
+          <div id="monthlyCategoryChart" class="rounded-xl border border-slate-800 bg-slate-900 p-2"></div>
+          <div id="rollingChart" class="rounded-xl border border-slate-800 bg-slate-900 p-2"></div>
+          <div id="dailyHeatmapChart" class="rounded-xl border border-slate-800 bg-slate-900 p-2"></div>
+        </section>
+
+        <section id="panel-budget" class="tab-panel hidden space-y-6">
+          <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <div id="budgetProjectedChart" class="rounded-xl border border-slate-800 bg-slate-900 p-2"></div>
+            <div id="budgetDeltaChart" class="rounded-xl border border-slate-800 bg-slate-900 p-2"></div>
+          </div>
+          <div class="rounded-xl border border-slate-800 bg-slate-900 p-3">
+            <div class="overflow-x-auto">
+              <table class="min-w-full text-sm">
+                <thead class="text-left text-xs uppercase text-slate-400">
+                  <tr>
+                    <th class="px-3 py-2">Category</th>
+                    <th class="px-3 py-2">Projected</th>
+                    <th class="px-3 py-2">Actual</th>
+                    <th class="px-3 py-2">Difference</th>
+                    <th class="px-3 py-2">Delta</th>
+                    <th class="px-3 py-2">% Used</th>
+                  </tr>
+                </thead>
+                <tbody id="budgetTable" class="divide-y divide-slate-800"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="panel-income" class="tab-panel hidden space-y-6">
+          <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <div id="incomePieChart" class="rounded-xl border border-slate-800 bg-slate-900 p-2"></div>
+            <div id="incomeTrendChart" class="rounded-xl border border-slate-800 bg-slate-900 p-2"></div>
+          </div>
+          <div class="rounded-xl border border-slate-800 bg-slate-900 p-3">
+            <div class="overflow-x-auto">
+              <table class="min-w-full text-sm">
+                <thead class="text-left text-xs uppercase text-slate-400">
+                  <tr>
+                    <th class="px-3 py-2">Source</th>
+                    <th class="px-3 py-2">Amount</th>
+                  </tr>
+                </thead>
+                <tbody id="incomeTable" class="divide-y divide-slate-800"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+
+        <section id="panel-savings" class="tab-panel hidden space-y-6">
+          <div class="grid grid-cols-1 gap-6 lg:grid-cols-2">
+            <div id="savingsBarChart" class="rounded-xl border border-slate-800 bg-slate-900 p-2"></div>
+            <div id="savingsCumChart" class="rounded-xl border border-slate-800 bg-slate-900 p-2"></div>
+          </div>
+          <div id="categoryAveragesChart" class="rounded-xl border border-slate-800 bg-slate-900 p-2"></div>
+        </section>
+
+        <section id="panel-transactions" class="tab-panel hidden space-y-4">
+          <p id="transactionsCount" class="text-sm text-slate-400"></p>
+          <div class="rounded-xl border border-slate-800 bg-slate-900 p-3">
+            <div class="overflow-x-auto">
+              <table class="min-w-full text-sm">
+                <thead class="text-left text-xs uppercase text-slate-400">
+                  <tr>
+                    <th class="px-3 py-2">Date</th>
+                    <th class="px-3 py-2">Category</th>
+                    <th class="px-3 py-2">Amount</th>
+                    <th class="px-3 py-2">Description</th>
+                  </tr>
+                </thead>
+                <tbody id="transactionsTable" class="divide-y divide-slate-800"></tbody>
+              </table>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <script>
+      const state = {
+        source: "auto",
+        categories: [],
+        months: [],
+      };
+
+      const plotBaseLayout = {
+        template: "plotly_dark",
+        paper_bgcolor: "rgba(0,0,0,0)",
+        plot_bgcolor: "rgba(0,0,0,0)",
+        margin: { t: 45, r: 24, b: 45, l: 55 },
+      };
+
+      function formatCurrency(value) {
+        const numeric = Number(value || 0);
+        return `EUR ${numeric.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+      }
+
+      function formatPercent(value) {
+        const numeric = Number(value || 0) * 100;
+        return `${numeric.toFixed(1)}%`;
+      }
+
+      function debounce(fn, delay = 350) {
+        let timer;
+        return (...args) => {
+          clearTimeout(timer);
+          timer = setTimeout(() => fn(...args), delay);
+        };
+      }
+
+      function parseMonthLabel(value) {
+        const [year, month] = String(value).split("-").map(Number);
+        if (!year || !month) return new Date();
+        return new Date(year, month - 1, 1);
+      }
+
+      function buildMonthRange(start, end) {
+        const startDate = parseMonthLabel(start);
+        const endDate = parseMonthLabel(end);
+        const months = [];
+        const cursor = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
+        while (cursor <= endDate) {
+          const year = cursor.getFullYear();
+          const month = String(cursor.getMonth() + 1).padStart(2, "0");
+          months.push(`${year}-${month}`);
+          cursor.setMonth(cursor.getMonth() + 1);
+        }
+        return months;
+      }
+
+      function selectedCategories() {
+        const select = document.getElementById("categoriesSelect");
+        return [...select.options].filter((opt) => opt.selected).map((opt) => opt.value);
+      }
+
+      function selectedFilterSnapshot() {
+        return {
+          source: document.getElementById("sourceSelect").value,
+          startMonth: document.getElementById("startMonth").value,
+          endMonth: document.getElementById("endMonth").value,
+          year: document.getElementById("yearSelect").value,
+          categories: selectedCategories(),
+          search: document.getElementById("searchInput").value.trim(),
+        };
+      }
+
+      function setStatus(text, type = "info") {
+        const el = document.getElementById("actionStatus");
+        const color = type === "error" ? "text-rose-300" : type === "success" ? "text-emerald-300" : "text-slate-300";
+        el.className = `text-xs ${color}`;
+        el.textContent = text;
+      }
+
+      function updateSourceStatus(sourceInfo) {
+        document.getElementById("loadedFrom").textContent = `Loaded from: ${sourceInfo.loaded_from}`;
+        const warning = document.getElementById("cloudWarning");
+        if (sourceInfo.cloud_error) {
+          warning.textContent = `Cloud fallback used local file: ${sourceInfo.cloud_error}`;
+          warning.classList.remove("hidden");
+        } else {
+          warning.classList.add("hidden");
+          warning.textContent = "";
+        }
+      }
+
+      async function fetchJson(url, options = {}) {
+        const response = await fetch(url, options);
+        const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload.message || `Request failed (${response.status})`);
+        }
+        return payload;
+      }
+
+      function fillSelect(selectId, values, selectedValues = []) {
+        const element = document.getElementById(selectId);
+        element.innerHTML = "";
+        for (const value of values) {
+          const option = document.createElement("option");
+          option.value = value;
+          option.textContent = value;
+          if (selectedValues.includes(value)) {
+            option.selected = true;
+          }
+          element.appendChild(option);
+        }
+      }
+
+      function plot(id, traces, layoutUpdates = {}) {
+        const layout = { ...plotBaseLayout, ...layoutUpdates };
+        Plotly.newPlot(id, traces, layout, { responsive: true, displayModeBar: false });
+      }
+
+      function renderOverview(payload) {
+        const kpis = payload.kpis;
+        document.getElementById("kpiIncome").textContent = formatCurrency(kpis.total_income);
+        document.getElementById("kpiExpenses").textContent = formatCurrency(kpis.total_expenses);
+        document.getElementById("kpiNet").textContent = formatCurrency(kpis.net_cash_flow);
+        document.getElementById("kpiSavingsRate").textContent = formatPercent(kpis.savings_rate);
+        document.getElementById("kpiAvgDaily").textContent = formatCurrency(kpis.average_daily_spending);
+        document.getElementById("kpiInvestments").textContent = formatCurrency(kpis.total_investments);
+
+        const monthly = payload.overview.monthly;
+        plot(
+          "overviewChart",
+          [
+            {
+              type: "scatter",
+              mode: "lines+markers",
+              name: "Income",
+              x: monthly.map((row) => row.month),
+              y: monthly.map((row) => row.income),
+              line: { color: "#34d399" },
+            },
+            {
+              type: "scatter",
+              mode: "lines+markers",
+              name: "Expenses",
+              x: monthly.map((row) => row.month),
+              y: monthly.map((row) => row.expenses),
+              line: { color: "#f87171" },
+            },
+          ],
+          { title: "Monthly Income vs Expenses", xaxis: { title: "Month" }, yaxis: { title: "Amount (EUR)" } }
+        );
+      }
+
+      function renderSpending(payload) {
+        const spending = payload.spending;
+        plot(
+          "spendingPieChart",
+          [
+            {
+              type: "pie",
+              labels: spending.breakdown.map((row) => row.category),
+              values: spending.breakdown.map((row) => row.amount),
+              hole: 0.35,
+            },
+          ],
+          { title: "Spending Breakdown by Category" }
+        );
+
+        plot(
+          "topCategoriesChart",
+          [
+            {
+              type: "bar",
+              orientation: "h",
+              x: spending.top_categories.map((row) => row.amount),
+              y: spending.top_categories.map((row) => row.category),
+              marker: { color: "#60a5fa" },
+            },
+          ],
+          { title: "Top Spending Categories", yaxis: { categoryorder: "total ascending" } }
+        );
+
+        const monthlyGrouped = {};
+        for (const row of spending.monthly_by_category) {
+          if (!monthlyGrouped[row.category]) {
+            monthlyGrouped[row.category] = { x: [], y: [] };
+          }
+          monthlyGrouped[row.category].x.push(row.month);
+          monthlyGrouped[row.category].y.push(row.amount);
+        }
+        const stackedTraces = Object.entries(monthlyGrouped).map(([category, value]) => ({
+          type: "bar",
+          name: category,
+          x: value.x,
+          y: value.y,
+        }));
+        plot("monthlyCategoryChart", stackedTraces, { title: "Monthly Spending by Category", barmode: "stack" });
+
+        plot(
+          "rollingChart",
+          [
+            {
+              type: "scatter",
+              mode: "lines+markers",
+              name: "Monthly spend",
+              x: spending.rolling.map((row) => row.month),
+              y: spending.rolling.map((row) => row.amount),
+            },
+            {
+              type: "scatter",
+              mode: "lines",
+              name: "3-month average",
+              x: spending.rolling.map((row) => row.month),
+              y: spending.rolling.map((row) => row.rolling_avg),
+            },
+          ],
+          { title: "Spending Trend and Rolling Average" }
+        );
+
+        const monthLabels = [...new Set(spending.daily.map((row) => row.date.slice(0, 7)))];
+        const days = Array.from({ length: 31 }, (_, idx) => idx + 1);
+        const matrix = monthLabels.map(() => Array.from({ length: 31 }, () => 0));
+        for (const row of spending.daily) {
+          const month = row.date.slice(0, 7);
+          const day = Number(row.date.slice(8, 10));
+          const monthIdx = monthLabels.indexOf(month);
+          if (monthIdx >= 0 && day >= 1 && day <= 31) {
+            matrix[monthIdx][day - 1] += Number(row.amount || 0);
+          }
+        }
+        plot(
+          "dailyHeatmapChart",
+          [
+            {
+              type: "heatmap",
+              x: days,
+              y: monthLabels,
+              z: matrix,
+              colorscale: "Blues",
+            },
+          ],
+          { title: "Daily Spending Heatmap", xaxis: { title: "Day of month" } }
+        );
+      }
+
+      function renderBudget(payload) {
+        const rows = payload.budget.table;
+        const withoutTotal = rows.filter((row) => !row.is_total);
+        plot(
+          "budgetProjectedChart",
+          [
+            { type: "bar", name: "Projected", x: withoutTotal.map((row) => row.category), y: withoutTotal.map((row) => row.projected) },
+            { type: "bar", name: "Actual", x: withoutTotal.map((row) => row.category), y: withoutTotal.map((row) => row.actual) },
+          ],
+          { title: "Projected vs Actual by Category", barmode: "group" }
+        );
+
+        plot(
+          "budgetDeltaChart",
+          [
+            {
+              type: "bar",
+              x: withoutTotal.map((row) => row.category),
+              y: withoutTotal.map((row) => row.delta),
+              marker: { color: withoutTotal.map((row) => (Number(row.delta) > 0 ? "#f87171" : "#4ade80")) },
+            },
+          ],
+          { title: "Budget Difference (Actual - Projected)" }
+        );
+
+        const table = document.getElementById("budgetTable");
+        table.innerHTML = rows
+          .map(
+            (row) => `<tr class="${row.is_total ? "bg-slate-800/70 font-semibold" : ""}">
+              <td class="px-3 py-2">${row.category}</td>
+              <td class="px-3 py-2">${formatCurrency(row.projected)}</td>
+              <td class="px-3 py-2">${formatCurrency(row.actual)}</td>
+              <td class="px-3 py-2">${formatCurrency(row.difference)}</td>
+              <td class="px-3 py-2">${formatCurrency(row.delta)}</td>
+              <td class="px-3 py-2">${formatPercent(row.pct_used)}</td>
+            </tr>`
+          )
+          .join("");
+      }
+
+      function renderIncome(payload) {
+        const income = payload.income;
+        plot(
+          "incomePieChart",
+          [
+            {
+              type: "pie",
+              labels: income.split.map((row) => row.source),
+              values: income.split.map((row) => row.amount),
+              hole: 0.35,
+            },
+          ],
+          { title: "Income by Source" }
+        );
+        plot(
+          "incomeTrendChart",
+          [
+            {
+              type: "scatter",
+              mode: "lines+markers",
+              x: income.trend.map((row) => row.month),
+              y: income.trend.map((row) => row.amount),
+              line: { color: "#22d3ee" },
+            },
+          ],
+          { title: "Monthly Income Trend" }
+        );
+
+        const table = document.getElementById("incomeTable");
+        table.innerHTML = income.split
+          .map(
+            (row) => `<tr>
+              <td class="px-3 py-2">${row.source}</td>
+              <td class="px-3 py-2">${formatCurrency(row.amount)}</td>
+            </tr>`
+          )
+          .join("");
+      }
+
+      function renderSavings(payload) {
+        const savings = payload.savings;
+        plot(
+          "savingsBarChart",
+          [
+            { type: "bar", name: "Savings", x: savings.curve.map((row) => row.month), y: savings.curve.map((row) => row.savings) },
+            { type: "bar", name: "Investments", x: savings.curve.map((row) => row.month), y: savings.curve.map((row) => row.investments) },
+          ],
+          { title: "Monthly Savings and Investments", barmode: "group" }
+        );
+        plot(
+          "savingsCumChart",
+          [
+            {
+              type: "scatter",
+              mode: "lines+markers",
+              name: "Savings cumulative",
+              x: savings.curve.map((row) => row.month),
+              y: savings.curve.map((row) => row.savings_cum),
+            },
+            {
+              type: "scatter",
+              mode: "lines+markers",
+              name: "Investments cumulative",
+              x: savings.curve.map((row) => row.month),
+              y: savings.curve.map((row) => row.investments_cum),
+            },
+          ],
+          { title: "Cumulative Savings & Investments" }
+        );
+
+        const grouped = {};
+        for (const row of savings.category_averages) {
+          const year = String(row.year);
+          if (!grouped[year]) {
+            grouped[year] = { x: [], y: [] };
+          }
+          grouped[year].x.push(row.category);
+          grouped[year].y.push(row.average_amount);
+        }
+        const traces = Object.entries(grouped).map(([year, values]) => ({
+          type: "bar",
+          name: year,
+          x: values.x,
+          y: values.y,
+        }));
+        plot("categoryAveragesChart", traces, { title: "Category Averages by Year", barmode: "group" });
+      }
+
+      function renderTransactions(payload) {
+        document.getElementById("transactionsCount").textContent = `${payload.transactions.count} transactions`;
+        const table = document.getElementById("transactionsTable");
+        table.innerHTML = payload.transactions.rows
+          .map(
+            (row) => `<tr>
+              <td class="px-3 py-2">${row.date}</td>
+              <td class="px-3 py-2">${row.category}</td>
+              <td class="px-3 py-2">${formatCurrency(row.amount)}</td>
+              <td class="px-3 py-2">${row.description || ""}</td>
+            </tr>`
+          )
+          .join("");
+      }
+
+      function renderAll(payload) {
+        const filters = payload.meta.filters;
+        document.getElementById("rangeCaption").textContent = `${filters.start_month} to ${filters.end_month} | Year: ${filters.year}`;
+        updateSourceStatus(payload.meta.source);
+        renderOverview(payload);
+        renderSpending(payload);
+        renderBudget(payload);
+        renderIncome(payload);
+        renderSavings(payload);
+        renderTransactions(payload);
+      }
+
+      async function loadMetadata() {
+        const source = document.getElementById("sourceSelect").value;
+        const payload = await fetchJson(`/api/data?source=${encodeURIComponent(source)}`);
+        state.source = source;
+        updateSourceStatus(payload.source);
+
+        const months = buildMonthRange(payload.filters.month_min, payload.filters.month_max);
+        state.months = months;
+        fillSelect("startMonth", months, [months[0]]);
+        fillSelect("endMonth", months, [months[months.length - 1]]);
+        fillSelect("yearSelect", payload.filters.years, ["All"]);
+        fillSelect("categoriesSelect", payload.filters.categories, payload.filters.categories);
+      }
+
+      async function loadDashboard() {
+        const filters = selectedFilterSnapshot();
+        const params = new URLSearchParams();
+        params.set("source", filters.source);
+        params.set("start_month", filters.startMonth);
+        params.set("end_month", filters.endMonth);
+        params.set("year", filters.year);
+        params.set("search", filters.search);
+        for (const category of filters.categories) {
+          params.append("categories", category);
+        }
+        const payload = await fetchJson(`/api/dashboard?${params.toString()}`);
+        renderAll(payload);
+      }
+
+      async function refreshData() {
+        try {
+          setStatus("Refreshing cloud data...");
+          const source = document.getElementById("sourceSelect").value;
+          const payload = await fetchJson(`/api/refresh?source=${encodeURIComponent(source)}`, { method: "POST" });
+          setStatus(payload.message, "success");
+          await loadMetadata();
+          await loadDashboard();
+        } catch (error) {
+          setStatus(error.message, "error");
+        }
+      }
+
+      async function syncMonefy() {
+        try {
+          setStatus("Syncing Monefy files...");
+          const payload = await fetchJson("/api/sync-monefy", { method: "POST" });
+          setStatus(payload.message, "success");
+          await loadMetadata();
+          await loadDashboard();
+        } catch (error) {
+          setStatus(error.message, "error");
+        }
+      }
+
+      function activateTab(tabId) {
+        for (const button of document.querySelectorAll(".tab-btn")) {
+          const active = button.dataset.tab === tabId;
+          button.classList.toggle("bg-indigo-600", active);
+          button.classList.toggle("bg-slate-800", !active);
+        }
+        for (const panel of document.querySelectorAll(".tab-panel")) {
+          panel.classList.toggle("hidden", panel.id !== `panel-${tabId}`);
+        }
+      }
+
+      function bindEvents() {
+        document.getElementById("sourceSelect").addEventListener("change", async () => {
+          try {
+            setStatus("Loading data source...");
+            await loadMetadata();
+            await loadDashboard();
+            setStatus("Source switched.", "success");
+          } catch (error) {
+            setStatus(error.message, "error");
+          }
+        });
+        document.getElementById("refreshBtn").addEventListener("click", refreshData);
+        document.getElementById("syncBtn").addEventListener("click", syncMonefy);
+        document.getElementById("applyFilters").addEventListener("click", async () => {
+          try {
+            setStatus("Applying filters...");
+            await loadDashboard();
+            setStatus("Filters applied.", "success");
+          } catch (error) {
+            setStatus(error.message, "error");
+          }
+        });
+        document.getElementById("searchInput").addEventListener(
+          "input",
+          debounce(async () => {
+            try {
+              await loadDashboard();
+            } catch (error) {
+              setStatus(error.message, "error");
+            }
+          }, 300)
+        );
+        document.getElementById("selectAllCategories").addEventListener("click", (event) => {
+          event.preventDefault();
+          const select = document.getElementById("categoriesSelect");
+          for (const option of select.options) {
+            option.selected = true;
+          }
+        });
+        document.getElementById("clearCategories").addEventListener("click", (event) => {
+          event.preventDefault();
+          const select = document.getElementById("categoriesSelect");
+          for (const option of select.options) {
+            option.selected = false;
+          }
+        });
+        for (const button of document.querySelectorAll(".tab-btn")) {
+          button.addEventListener("click", () => activateTab(button.dataset.tab));
+        }
+      }
+
+      async function boot() {
+        bindEvents();
+        activateTab("overview");
+        try {
+          await loadMetadata();
+          await loadDashboard();
+          setStatus("Dashboard ready.", "success");
+        } catch (error) {
+          setStatus(error.message, "error");
+        }
+      }
+
+      boot();
+    </script>
+  </body>
+</html>
