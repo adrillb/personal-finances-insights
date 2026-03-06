@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+from functools import lru_cache
 import logging
 import os
 from pathlib import Path
+from time import perf_counter, time
 from urllib.parse import urlencode
 from urllib.request import Request as UrlRequest, urlopen
 
@@ -110,3 +112,61 @@ def download_sheet_as_xlsx(
     except Exception:
         LOGGER.error("Failed to download spreadsheet as XLSX.", exc_info=True)
         raise
+
+
+def _cache_ttl_seconds() -> int:
+    raw_ttl = os.getenv("CLOUD_EXPORT_CACHE_TTL_SECONDS", "180")
+    try:
+        ttl = int(raw_ttl)
+    except ValueError:
+        ttl = 180
+    return max(ttl, 1)
+
+
+def _ttl_bucket(ttl_seconds: int) -> int:
+    return int(time() // ttl_seconds)
+
+
+@lru_cache(maxsize=8)
+def _download_sheet_as_xlsx_cached(
+    spreadsheet_name: str,
+    credentials_path: str,
+    ttl_bucket: int,
+) -> bytes:
+    del ttl_bucket
+    return download_sheet_as_xlsx(
+        spreadsheet_name=spreadsheet_name,
+        credentials_path=credentials_path,
+    )
+
+
+def download_sheet_as_xlsx_cached(
+    spreadsheet_name: str | None = None,
+    credentials_path: str | Path | None = None,
+    *,
+    force_refresh: bool = False,
+) -> bytes:
+    """Export a Google Sheet as XLSX bytes with a short-lived cache."""
+    if force_refresh:
+        _download_sheet_as_xlsx_cached.cache_clear()
+    name = _resolve_spreadsheet_name(spreadsheet_name)
+    resolved_credentials = str(_resolve_credentials_path(credentials_path))
+    ttl_seconds = _cache_ttl_seconds()
+    start_time = perf_counter()
+    payload = _download_sheet_as_xlsx_cached(
+        name,
+        resolved_credentials,
+        _ttl_bucket(ttl_seconds),
+    )
+    elapsed_ms = (perf_counter() - start_time) * 1000
+    LOGGER.debug(
+        "download_sheet_as_xlsx_cached completed in %.2fms (ttl=%ss).",
+        elapsed_ms,
+        ttl_seconds,
+    )
+    return payload
+
+
+def clear_cloud_export_cache() -> None:
+    """Clear cached cloud export payloads."""
+    _download_sheet_as_xlsx_cached.cache_clear()

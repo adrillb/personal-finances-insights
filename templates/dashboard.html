@@ -242,6 +242,10 @@
         source: "auto",
         categories: [],
         months: [],
+        activeTab: "overview",
+        dashboardPayload: null,
+        renderedTabs: new Set(),
+        lastFilterKey: "",
       };
 
       const plotBaseLayout = {
@@ -349,7 +353,7 @@
 
       function plot(id, traces, layoutUpdates = {}) {
         const layout = { ...plotBaseLayout, ...layoutUpdates };
-        Plotly.newPlot(id, traces, layout, { responsive: true, displayModeBar: false });
+        Plotly.react(id, traces, layout, { responsive: true, displayModeBar: false });
       }
 
       function renderOverview(payload) {
@@ -455,11 +459,12 @@
         const monthLabels = [...new Set(spending.daily.map((row) => row.date.slice(0, 7)))];
         const days = Array.from({ length: 31 }, (_, idx) => idx + 1);
         const matrix = monthLabels.map(() => Array.from({ length: 31 }, () => 0));
+        const monthIndexByLabel = new Map(monthLabels.map((label, idx) => [label, idx]));
         for (const row of spending.daily) {
           const month = row.date.slice(0, 7);
           const day = Number(row.date.slice(8, 10));
-          const monthIdx = monthLabels.indexOf(month);
-          if (monthIdx >= 0 && day >= 1 && day <= 31) {
+          const monthIdx = monthIndexByLabel.get(month);
+          if (monthIdx !== undefined && day >= 1 && day <= 31) {
             matrix[monthIdx][day - 1] += Number(row.amount || 0);
           }
         }
@@ -606,10 +611,10 @@
         plot("categoryAveragesChart", traces, { title: "Category Averages by Year", barmode: "group" });
       }
 
-      function renderTransactions(payload) {
-        document.getElementById("transactionsCount").textContent = `${payload.transactions.count} transactions`;
+      function renderTransactions(transactions) {
+        document.getElementById("transactionsCount").textContent = `${transactions.count} transactions`;
         const table = document.getElementById("transactionsTable");
-        table.innerHTML = payload.transactions.rows
+        table.innerHTML = transactions.rows
           .map(
             (row) => `<tr>
               <td class="px-3 py-2">${row.date}</td>
@@ -621,16 +626,72 @@
           .join("");
       }
 
-      function renderAll(payload) {
-        const filters = payload.meta.filters;
+      function updateDashboardMeta(meta) {
+        const filters = meta.filters;
         document.getElementById("rangeCaption").textContent = `${filters.start_month} to ${filters.end_month} | Year: ${filters.year}`;
-        updateSourceStatus(payload.meta.source);
-        renderOverview(payload);
-        renderSpending(payload);
-        renderBudget(payload);
-        renderIncome(payload);
-        renderSavings(payload);
-        renderTransactions(payload);
+        updateSourceStatus(meta.source);
+      }
+
+      function filtersKey(filters) {
+        return [
+          filters.source,
+          filters.startMonth,
+          filters.endMonth,
+          filters.year,
+          [...filters.categories].sort().join(","),
+        ].join("|");
+      }
+
+      function buildBaseDashboardParams(filters) {
+        const params = new URLSearchParams();
+        params.set("source", filters.source);
+        params.set("start_month", filters.startMonth);
+        params.set("end_month", filters.endMonth);
+        params.set("year", filters.year);
+        for (const category of filters.categories) {
+          params.append("categories", category);
+        }
+        return params;
+      }
+
+      function renderTab(tabId, payload) {
+        if (tabId === "overview") {
+          renderOverview(payload);
+          return;
+        }
+        if (tabId === "spending") {
+          renderSpending(payload);
+          return;
+        }
+        if (tabId === "budget") {
+          renderBudget(payload);
+          return;
+        }
+        if (tabId === "income") {
+          renderIncome(payload);
+          return;
+        }
+        if (tabId === "savings") {
+          renderSavings(payload);
+        }
+      }
+
+      function renderActiveTab(force = false) {
+        if (!state.dashboardPayload) {
+          return;
+        }
+        if (!force && state.renderedTabs.has(state.activeTab)) {
+          return;
+        }
+        if (state.activeTab === "transactions") {
+          if (state.dashboardPayload.transactions) {
+            renderTransactions(state.dashboardPayload.transactions);
+            state.renderedTabs.add("transactions");
+          }
+          return;
+        }
+        renderTab(state.activeTab, state.dashboardPayload);
+        state.renderedTabs.add(state.activeTab);
       }
 
       async function loadMetadata() {
@@ -647,19 +708,47 @@
         fillSelect("categoriesSelect", payload.filters.categories, payload.filters.categories);
       }
 
-      async function loadDashboard() {
+      async function loadDashboard(options = {}) {
+        const { refreshTransactions = false } = options;
         const filters = selectedFilterSnapshot();
-        const params = new URLSearchParams();
-        params.set("source", filters.source);
-        params.set("start_month", filters.startMonth);
-        params.set("end_month", filters.endMonth);
-        params.set("year", filters.year);
-        params.set("search", filters.search);
-        for (const category of filters.categories) {
-          params.append("categories", category);
-        }
+        const params = buildBaseDashboardParams(filters);
+        const requestStarted = performance.now();
         const payload = await fetchJson(`/api/dashboard?${params.toString()}`);
-        renderAll(payload);
+        state.lastFilterKey = filtersKey(filters);
+        state.dashboardPayload = payload;
+        state.dashboardPayload.transactions = null;
+        state.renderedTabs.clear();
+        updateDashboardMeta(payload.meta);
+        renderActiveTab(true);
+
+        const backendMs = payload.meta?.timings?.endpoint_total_ms;
+        const clientMs = Math.round(performance.now() - requestStarted);
+        setStatus(`Dashboard updated (${clientMs}ms client / ${backendMs ?? "n/a"}ms server).`, "success");
+
+        if (refreshTransactions || state.activeTab === "transactions") {
+          await loadTransactions({ filters, silent: true });
+        }
+      }
+
+      async function loadTransactions(options = {}) {
+        const { filters = null, silent = false } = options;
+        const resolvedFilters = filters || selectedFilterSnapshot();
+        const params = buildBaseDashboardParams(resolvedFilters);
+        params.set("search", resolvedFilters.search);
+        const requestStarted = performance.now();
+        const payload = await fetchJson(`/api/transactions?${params.toString()}`);
+        if (state.dashboardPayload) {
+          state.dashboardPayload.transactions = payload.transactions;
+          state.dashboardPayload.meta = payload.meta;
+        }
+        updateDashboardMeta(payload.meta);
+        renderTransactions(payload.transactions);
+        state.renderedTabs.add("transactions");
+        if (!silent) {
+          const backendMs = payload.meta?.timings?.endpoint_total_ms;
+          const clientMs = Math.round(performance.now() - requestStarted);
+          setStatus(`Transactions updated (${clientMs}ms client / ${backendMs ?? "n/a"}ms server).`, "success");
+        }
       }
 
       async function refreshData() {
@@ -669,7 +758,7 @@
           const payload = await fetchJson(`/api/refresh?source=${encodeURIComponent(source)}`, { method: "POST" });
           setStatus(payload.message, "success");
           await loadMetadata();
-          await loadDashboard();
+          await loadDashboard({ refreshTransactions: state.activeTab === "transactions" });
         } catch (error) {
           setStatus(error.message, "error");
         }
@@ -681,13 +770,14 @@
           const payload = await fetchJson("/api/sync-monefy", { method: "POST" });
           setStatus(payload.message, "success");
           await loadMetadata();
-          await loadDashboard();
+          await loadDashboard({ refreshTransactions: state.activeTab === "transactions" });
         } catch (error) {
           setStatus(error.message, "error");
         }
       }
 
-      function activateTab(tabId) {
+      async function activateTab(tabId) {
+        state.activeTab = tabId;
         for (const button of document.querySelectorAll(".tab-btn")) {
           const active = button.dataset.tab === tabId;
           button.classList.toggle("bg-indigo-600", active);
@@ -696,6 +786,14 @@
         for (const panel of document.querySelectorAll(".tab-panel")) {
           panel.classList.toggle("hidden", panel.id !== `panel-${tabId}`);
         }
+        if (!state.dashboardPayload) {
+          return;
+        }
+        if (tabId === "transactions") {
+          await loadTransactions({ silent: true });
+          return;
+        }
+        renderActiveTab();
       }
 
       function bindEvents() {
@@ -703,7 +801,7 @@
           try {
             setStatus("Loading data source...");
             await loadMetadata();
-            await loadDashboard();
+            await loadDashboard({ refreshTransactions: state.activeTab === "transactions" });
             setStatus("Source switched.", "success");
           } catch (error) {
             setStatus(error.message, "error");
@@ -714,7 +812,7 @@
         document.getElementById("applyFilters").addEventListener("click", async () => {
           try {
             setStatus("Applying filters...");
-            await loadDashboard();
+            await loadDashboard({ refreshTransactions: state.activeTab === "transactions" });
             setStatus("Filters applied.", "success");
           } catch (error) {
             setStatus(error.message, "error");
@@ -724,7 +822,10 @@
           "input",
           debounce(async () => {
             try {
-              await loadDashboard();
+              if (state.activeTab !== "transactions") {
+                return;
+              }
+              await loadTransactions();
             } catch (error) {
               setStatus(error.message, "error");
             }
@@ -745,16 +846,18 @@
           }
         });
         for (const button of document.querySelectorAll(".tab-btn")) {
-          button.addEventListener("click", () => activateTab(button.dataset.tab));
+          button.addEventListener("click", async () => {
+            await activateTab(button.dataset.tab);
+          });
         }
       }
 
       async function boot() {
         bindEvents();
-        activateTab("overview");
+        await activateTab("overview");
         try {
           await loadMetadata();
-          await loadDashboard();
+          await loadDashboard({ refreshTransactions: false });
           setStatus("Dashboard ready.", "success");
         } catch (error) {
           setStatus(error.message, "error");

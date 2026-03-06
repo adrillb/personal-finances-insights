@@ -6,10 +6,12 @@ from dataclasses import dataclass
 from datetime import date, datetime
 import io
 import logging
+from time import perf_counter
 import re
 from pathlib import Path
 
 import openpyxl
+from openpyxl.workbook.workbook import Workbook
 import pandas as pd
 
 LOGGER = logging.getLogger(__name__)
@@ -43,7 +45,7 @@ class WorkbookData:
     category_averages: pd.DataFrame
 
 
-WorkbookSource = str | Path | bytes | None
+WorkbookSource = str | Path | bytes | Workbook | None
 
 
 def resolve_workbook_path(workbook_path: str | Path | None = None) -> Path:
@@ -67,9 +69,12 @@ def resolve_workbook_path(workbook_path: str | Path | None = None) -> Path:
     return candidates[0]
 
 
-def _load_workbook(source: WorkbookSource = None) -> openpyxl.Workbook:
+def _load_workbook(source: WorkbookSource = None) -> Workbook:
     LOGGER.debug("Loading workbook. source_type=%s", type(source).__name__)
     try:
+        if isinstance(source, Workbook):
+            LOGGER.debug("Workbook object provided directly; reusing open workbook instance.")
+            return source
         if isinstance(source, bytes):
             workbook = openpyxl.load_workbook(io.BytesIO(source), data_only=True)
             LOGGER.debug("Workbook loaded from in-memory bytes. byte_size=%s", len(source))
@@ -364,19 +369,23 @@ def load_category_averages(source: WorkbookSource = None) -> pd.DataFrame:
 def load_all_data(source: WorkbookSource = None) -> WorkbookData:
     """Load all DataFrames required by the dashboard."""
     LOGGER.debug("load_all_data started. source_type=%s", type(source).__name__)
+    start_time = perf_counter()
+    workbook = _load_workbook(source)
     data = WorkbookData(
-        raw_transactions=load_raw_transactions(source),
-        general_summary=load_general_summary(source),
-        expenses_by_category=load_expenses_by_category(source),
-        budget=load_budget(source),
-        income_by_source=load_income_by_source(source),
-        category_averages=load_category_averages(source),
+        raw_transactions=load_raw_transactions(workbook),
+        general_summary=load_general_summary(workbook),
+        expenses_by_category=load_expenses_by_category(workbook),
+        budget=load_budget(workbook),
+        income_by_source=load_income_by_source(workbook),
+        category_averages=load_category_averages(workbook),
     )
+    elapsed_ms = (perf_counter() - start_time) * 1000
     LOGGER.info(
         (
-            "load_all_data succeeded. raw_transactions=%s general_summary=%s "
+            "load_all_data succeeded in %.2fms. raw_transactions=%s general_summary=%s "
             "expenses_by_category=%s budget=%s income_by_source=%s category_averages=%s"
         ),
+        elapsed_ms,
         len(data.raw_transactions),
         len(data.general_summary),
         len(data.expenses_by_category),

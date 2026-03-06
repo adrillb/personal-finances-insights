@@ -43,7 +43,8 @@ def _apply_month_filter(
         LOGGER.warning("Month filter received an empty dataframe.")
         return frame.copy()
     result = frame.copy()
-    result[month_col] = result[month_col].map(_normalize_month_start)
+    month_values = pd.to_datetime(result[month_col], errors="coerce")
+    result[month_col] = month_values.dt.to_period("M").dt.to_timestamp()
     if start_month is not None:
         result = result[result[month_col] >= _normalize_month_start(start_month)]
     if end_month is not None:
@@ -219,6 +220,7 @@ def top_categories(
     top_n: int = 5,
     start_month: pd.Timestamp | None = None,
     end_month: pd.Timestamp | None = None,
+    breakdown: pd.DataFrame | None = None,
 ) -> pd.DataFrame:
     """Return the highest-spend categories for the selected period."""
     LOGGER.debug(
@@ -228,10 +230,12 @@ def top_categories(
         start_month,
         end_month,
     )
-    breakdown = spending_breakdown(expenses_by_category, start_month, end_month)
-    if breakdown.empty:
+    resolved_breakdown = breakdown
+    if resolved_breakdown is None:
+        resolved_breakdown = spending_breakdown(expenses_by_category, start_month, end_month)
+    if resolved_breakdown.empty:
         LOGGER.warning("top_categories has no categories to return.")
-    result = breakdown.head(top_n).reset_index(drop=True)
+    result = resolved_breakdown.head(top_n).reset_index(drop=True)
     LOGGER.debug("top_categories completed. rows=%s cols=%s", len(result), len(result.columns))
     return result
 
@@ -284,6 +288,7 @@ def average_daily_spending(
     start_date: pd.Timestamp | None = None,
     end_date: pd.Timestamp | None = None,
     categories: Iterable[str] | None = None,
+    daily_totals: pd.DataFrame | None = None,
 ) -> float:
     """Return average daily spending over days with transactions."""
     categories_list = list(categories) if categories is not None else None
@@ -294,7 +299,9 @@ def average_daily_spending(
         end_date,
         len(categories_list) if categories_list else 0,
     )
-    daily = daily_spending(raw_transactions, start_date, end_date, categories_list)
+    daily = daily_totals
+    if daily is None:
+        daily = daily_spending(raw_transactions, start_date, end_date, categories_list)
     if daily.empty:
         LOGGER.warning("average_daily_spending computed from empty daily dataset.")
         return 0.0

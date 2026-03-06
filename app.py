@@ -6,6 +6,7 @@ from datetime import datetime
 import logging
 import os
 from pathlib import Path
+from time import perf_counter
 
 import pandas as pd
 import plotly.express as px
@@ -14,7 +15,7 @@ import streamlit as st
 from dotenv import load_dotenv
 
 from src.data_loader import load_all_data, resolve_workbook_path
-from src.cloud_connector import download_sheet_as_xlsx
+from src.cloud_connector import clear_cloud_export_cache, download_sheet_as_xlsx_cached
 from src.insights import (
     average_daily_spending,
     budget_adherence,
@@ -39,6 +40,10 @@ LOGGER.info("Starting Personal Finance Insights app.")
 
 load_dotenv()
 LOGGER.debug("Environment loaded. log_path=%s", LOG_PATH)
+
+
+def _elapsed_ms(start_time: float) -> float:
+    return round((perf_counter() - start_time) * 1000, 2)
 
 
 def _format_currency(value: float) -> str:
@@ -86,6 +91,8 @@ def _load_cached_cloud_data(workbook_bytes: bytes):
 
 st.set_page_config(page_title="Personal Finance Insights", layout="wide")
 st.title("Personal Finance Insights")
+script_started = perf_counter()
+timings: dict[str, float] = {}
 
 st.sidebar.header("Data Source")
 data_mode = st.sidebar.selectbox(
@@ -97,6 +104,7 @@ LOGGER.info("Selected workbook source mode: %s", data_mode)
 
 if st.sidebar.button("Refresh from Cloud"):
     LOGGER.info("User clicked Refresh from Cloud.")
+    clear_cloud_export_cache()
     st.cache_data.clear()
     st.session_state["cloud_message"] = "Cloud cache cleared. Data refreshed."
     st.rerun()
@@ -108,6 +116,7 @@ if st.sidebar.button("Sync Monefy"):
             folder=os.getenv("MONEFY_FOLDER"),
             spreadsheet_name=os.getenv("SPREADSHEET_NAME"),
         )
+        clear_cloud_export_cache()
         st.cache_data.clear()
         st.session_state["cloud_message"] = (
             "Monefy sync completed: "
@@ -135,10 +144,11 @@ cloud_error: str | None = None
 LOGGER.debug("Resolved local workbook path: %s", workbook_path)
 
 data = None
+data_load_started = perf_counter()
 if data_mode != "Local only" and _cloud_is_configured():
     LOGGER.info("Trying cloud workbook download.")
     try:
-        cloud_bytes = download_sheet_as_xlsx(os.getenv("SPREADSHEET_NAME"))
+        cloud_bytes = download_sheet_as_xlsx_cached(os.getenv("SPREADSHEET_NAME"))
         data = _load_cached_cloud_data(cloud_bytes)
         loaded_from = "Google Sheet (cloud export)"
         LOGGER.info("Cloud workbook loaded successfully.")
@@ -157,6 +167,7 @@ if data is None:
     except Exception:
         LOGGER.error("Local workbook load failed.", exc_info=True)
         raise
+timings["data_load_ms"] = _elapsed_ms(data_load_started)
 
 st.sidebar.caption(f"Loaded from: {loaded_from}")
 if cloud_error:
@@ -219,6 +230,7 @@ if selected_year != "All":
 start_date = start_month
 end_date = (end_month + pd.offsets.MonthEnd(1)).normalize()
 
+aggregation_started = perf_counter()
 monthly_overview = monthly_totals(general_summary)
 monthly_overview = monthly_overview[
     (monthly_overview["month"] >= start_month) & (monthly_overview["month"] <= end_month)
@@ -237,7 +249,13 @@ monthly_by_category = monthly_category_spending(
     end_month=end_month,
     categories=selected_categories,
 )
-top_spend = top_categories(expenses_by_category, top_n=7, start_month=start_month, end_month=end_month)
+top_spend = top_categories(
+    expenses_by_category,
+    top_n=7,
+    start_month=start_month,
+    end_month=end_month,
+    breakdown=category_breakdown,
+)
 rolling = rolling_spending(
     expenses_by_category[
         expenses_by_category["category"].isin(selected_categories)
@@ -256,6 +274,7 @@ avg_daily = average_daily_spending(
     start_date=start_date,
     end_date=end_date,
     categories=selected_categories,
+    daily_totals=daily,
 )
 
 budget_table = budget_adherence(budget)
@@ -276,6 +295,7 @@ transactions = transactions[
     & (transactions["date"] <= end_date)
     & (transactions["category"].isin(selected_categories))
 ]
+timings["aggregation_ms"] = _elapsed_ms(aggregation_started)
 
 tabs = st.tabs(
     [
@@ -486,3 +506,17 @@ with tabs[5]:
         width="stretch",
         hide_index=True,
     )
+
+timings["script_total_ms"] = _elapsed_ms(script_started)
+st.sidebar.caption(
+    "Timing | load: "
+    f"{timings.get('data_load_ms', 0.0):.1f}ms | "
+    f"aggregate: {timings.get('aggregation_ms', 0.0):.1f}ms | "
+    f"total: {timings.get('script_total_ms', 0.0):.1f}ms"
+)
+LOGGER.info(
+    "Streamlit timings: data_load_ms=%.2f aggregation_ms=%.2f script_total_ms=%.2f",
+    timings.get("data_load_ms", 0.0),
+    timings.get("aggregation_ms", 0.0),
+    timings.get("script_total_ms", 0.0),
+)
