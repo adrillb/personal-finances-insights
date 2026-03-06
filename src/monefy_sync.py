@@ -229,12 +229,61 @@ def _to_sheet_value(value: object) -> object:
     return value
 
 
+def _read_sheet_rows(worksheet: gspread.Worksheet, header: list[str]) -> pd.DataFrame:
+    raw_values = worksheet.get_all_values()
+    if len(raw_values) <= 1:
+        return pd.DataFrame(columns=header)
+
+    sheet_header = raw_values[0]
+    rows = raw_values[1:]
+    padded_rows: list[list[object]] = []
+    for row in rows:
+        if len(row) < len(sheet_header):
+            row = row + [""] * (len(sheet_header) - len(row))
+        padded_rows.append(row[: len(sheet_header)])
+
+    frame = pd.DataFrame(padded_rows, columns=sheet_header)
+    for column in header:
+        if column not in frame.columns:
+            frame[column] = ""
+    return frame[header]
+
+
+def _normalize_rows_for_sync(frame: pd.DataFrame, header: list[str]) -> pd.DataFrame:
+    scoped = frame.copy()
+    for column in header:
+        if column not in scoped.columns:
+            scoped[column] = ""
+    scoped = scoped[header]
+
+    scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce").dt.strftime("%Y-%m-%d")
+    scoped["date"] = scoped["date"].fillna("")
+    for column in ["account", "category", "currency", "description"]:
+        scoped[column] = scoped[column].fillna("").astype(str).str.strip()
+
+    scoped["amount"] = pd.to_numeric(scoped["amount"], errors="coerce").fillna(0.0).round(2)
+    scoped["converted_amount"] = pd.to_numeric(scoped["converted_amount"], errors="coerce")
+    return scoped
+
+
+def _replace_worksheet_rows(
+    worksheet: gspread.Worksheet,
+    header: list[str],
+    frame: pd.DataFrame,
+) -> None:
+    values = [[_to_sheet_value(value) for value in row] for row in frame.to_numpy()]
+    worksheet.clear()
+    worksheet.append_row(header, value_input_option="USER_ENTERED")
+    if values:
+        worksheet.append_rows(values, value_input_option="USER_ENTERED")
+
+
 def sync_to_sheet(
     df: pd.DataFrame,
     spreadsheet_name: str,
     sheet_name: str = "MonefyCSV",
 ) -> int:
-    """Append normalized rows into a worksheet and return inserted row count."""
+    """Merge, deduplicate, and replace worksheet rows; return net new rows."""
     LOGGER.debug(
         "sync_to_sheet started. rows=%s spreadsheet=%s sheet=%s",
         len(df),
@@ -248,21 +297,31 @@ def sync_to_sheet(
     try:
         spreadsheet = get_spreadsheet(spreadsheet_name)
         worksheet = _ensure_worksheet(spreadsheet, sheet_name, NORMALIZED_COLUMNS)
-        target_header = worksheet.row_values(1) or NORMALIZED_COLUMNS
+        target_header = NORMALIZED_COLUMNS
 
-        aligned = df.copy()
-        for column in target_header:
-            if column not in aligned.columns:
-                aligned[column] = ""
-        aligned = aligned[target_header]
+        existing_rows = _normalize_rows_for_sync(_read_sheet_rows(worksheet, target_header), target_header)
+        incoming_rows = _normalize_rows_for_sync(df, target_header)
+        existing_count = len(existing_rows)
+        incoming_count = len(incoming_rows)
 
-        values = [[_to_sheet_value(value) for value in row] for row in aligned.to_numpy()]
-        if not values:
-            LOGGER.warning("sync_to_sheet produced no values after alignment.")
-            return 0
-        worksheet.append_rows(values, value_input_option="USER_ENTERED")
-        LOGGER.info("Synced rows to sheet. sheet=%s rows=%s", sheet_name, len(values))
-        return len(values)
+        merged_rows = pd.concat([existing_rows, incoming_rows], ignore_index=True)
+        merged_rows = merged_rows.drop_duplicates(subset=target_header, keep="last")
+        merged_rows = merged_rows.sort_values("date").reset_index(drop=True)
+        final_count = len(merged_rows)
+        net_new_rows = max(final_count - existing_count, 0)
+        duplicate_rows = max(existing_count + incoming_count - final_count, 0)
+
+        _replace_worksheet_rows(worksheet, target_header, merged_rows)
+        LOGGER.info(
+            "Synced rows to sheet with replacement. sheet=%s existing=%s incoming=%s final=%s net_new=%s deduplicated=%s",
+            sheet_name,
+            existing_count,
+            incoming_count,
+            final_count,
+            net_new_rows,
+            duplicate_rows,
+        )
+        return net_new_rows
     except Exception:
         LOGGER.error("Failed writing rows to sheet=%s", sheet_name, exc_info=True)
         raise
