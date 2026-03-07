@@ -319,7 +319,7 @@ This project supports a lightweight Monefy automation flow:
 2. Share the CSV to your OneDrive folder (`MONEFY_FOLDER`)
 3. In the dashboard sidebar, click **Sync Monefy**
 4. The app will:
-   - Validate that `MONEFY_FOLDER` contains exactly one CSV file
+   - Take the first file found inside `MONEFY_FOLDER`
    - Keep the existing `MonefyCSV` sheet
    - Clear its values and copy the CSV content as-is (preserving text formats like dates)
 

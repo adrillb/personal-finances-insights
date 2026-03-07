@@ -43,16 +43,15 @@ def _resolve_monefy_folder(folder: str | Path | None = None) -> Path:
     return path
 
 
-def _resolve_single_csv(folder_path: Path) -> Path:
-    csv_files = sorted(folder_path.glob("*.csv"), key=lambda path: path.stat().st_mtime)
-    LOGGER.debug("Discovered CSV files in MONEFY_FOLDER. count=%s", len(csv_files))
-    if not csv_files:
-        raise FileNotFoundError(f"No CSV files found in MONEFY_FOLDER: {folder_path}")
-    if len(csv_files) > 1:
-        raise ValueError(
-            f"Expected exactly one CSV in MONEFY_FOLDER but found {len(csv_files)}: {folder_path}"
-        )
-    return csv_files[0]
+def _resolve_first_file(folder_path: Path) -> Path:
+    files = sorted(
+        (path for path in folder_path.iterdir() if path.is_file()),
+        key=lambda path: path.stat().st_mtime,
+    )
+    LOGGER.debug("Discovered files in MONEFY_FOLDER. count=%s", len(files))
+    if not files:
+        raise FileNotFoundError(f"No files found in MONEFY_FOLDER: {folder_path}")
+    return files[0]
 
 
 def load_monefy_csv_rows(path: str | Path) -> tuple[list[str], list[list[str]]]:
@@ -418,7 +417,7 @@ def run_sync(
     spreadsheet_name: str | None = None,
     sheet_name: str = "MonefyCSV",
 ) -> dict[str, int | str]:
-    """Clear Monefy sheet values and copy the single CSV in MONEFY_FOLDER."""
+    """Clear Monefy sheet values and copy the first file found in MONEFY_FOLDER."""
     LOGGER.debug(
         "run_sync started. folder=%s spreadsheet_name=%s sheet_name=%s",
         folder,
@@ -432,7 +431,7 @@ def run_sync(
     if not spreadsheet_name:
         raise ValueError("Missing SPREADSHEET_NAME. Set it in .env or pass spreadsheet_name.")
 
-    csv_path = _resolve_single_csv(folder_path)
+    csv_path = _resolve_first_file(folder_path)
     header, rows = load_monefy_csv_rows(csv_path)
     rows = _normalize_date_columns(header, rows)
     rows = _normalize_numeric_columns(header, rows)
