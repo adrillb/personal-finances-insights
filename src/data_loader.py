@@ -381,11 +381,14 @@ def load_all_data(source: WorkbookSource = None) -> WorkbookData:
     )
     elapsed_ms = (perf_counter() - start_time) * 1000
     LOGGER.info(
+        "Workbook data loaded in %.2fms.",
+        elapsed_ms,
+    )
+    LOGGER.debug(
         (
-            "load_all_data succeeded in %.2fms. raw_transactions=%s general_summary=%s "
+            "load_all_data details. raw_transactions=%s general_summary=%s "
             "expenses_by_category=%s budget=%s income_by_source=%s category_averages=%s"
         ),
-        elapsed_ms,
         len(data.raw_transactions),
         len(data.general_summary),
         len(data.expenses_by_category),

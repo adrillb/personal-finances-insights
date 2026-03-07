@@ -100,7 +100,7 @@ data_mode = st.sidebar.selectbox(
     options=["Auto (Cloud + Local fallback)", "Local only"],
     index=0,
 )
-LOGGER.info("Selected workbook source mode: %s", data_mode)
+LOGGER.debug("Selected workbook source mode: %s", data_mode)
 
 if st.sidebar.button("Refresh from Cloud"):
     LOGGER.info("User clicked Refresh from Cloud.")
@@ -146,16 +146,15 @@ LOGGER.debug("Resolved local workbook path: %s", workbook_path)
 data = None
 data_load_started = perf_counter()
 if data_mode != "Local only" and _cloud_is_configured():
-    LOGGER.info("Trying cloud workbook download.")
+    LOGGER.info("Loading workbook from cloud export.")
     try:
         cloud_bytes = download_sheet_as_xlsx_cached(os.getenv("SPREADSHEET_NAME"))
         data = _load_cached_cloud_data(cloud_bytes)
         loaded_from = "Google Sheet (cloud export)"
-        LOGGER.info("Cloud workbook loaded successfully.")
+        LOGGER.info("Cloud workbook loaded.")
     except Exception as exc:
         cloud_error = str(exc)
-        LOGGER.error("Cloud workbook load failed; falling back to local.", exc_info=True)
-        LOGGER.warning("Cloud fallback to local workbook activated.")
+        LOGGER.warning("Cloud load failed; using local workbook. reason=%s", exc)
 elif data_mode != "Local only":
     LOGGER.warning("Cloud mode selected but cloud is not configured. Using local workbook.")
 
@@ -163,7 +162,7 @@ if data is None:
     LOGGER.info("Loading local workbook.")
     try:
         data = _load_cached_local_data(workbook_path)
-        LOGGER.info("Local workbook loaded successfully.")
+        LOGGER.info("Local workbook loaded.")
     except Exception:
         LOGGER.error("Local workbook load failed.", exc_info=True)
         raise
@@ -171,7 +170,7 @@ timings["data_load_ms"] = _elapsed_ms(data_load_started)
 
 st.sidebar.caption(f"Loaded from: {loaded_from}")
 if cloud_error:
-    LOGGER.warning("Cloud fallback details: %s", cloud_error)
+    LOGGER.debug("Cloud fallback details: %s", cloud_error)
     st.sidebar.warning(f"Cloud fallback used local file: {cloud_error}")
 
 general_summary = data.general_summary
@@ -180,7 +179,7 @@ raw_transactions = data.raw_transactions
 budget = data.budget
 income_by_source = data.income_by_source
 category_averages = data.category_averages
-LOGGER.info(
+LOGGER.debug(
     (
         "Dataset sizes loaded. general_summary=%sx%s expenses_by_category=%sx%s "
         "raw_transactions=%sx%s budget=%sx%s income_by_source=%sx%s category_averages=%sx%s"
@@ -514,7 +513,7 @@ st.sidebar.caption(
     f"aggregate: {timings.get('aggregation_ms', 0.0):.1f}ms | "
     f"total: {timings.get('script_total_ms', 0.0):.1f}ms"
 )
-LOGGER.info(
+LOGGER.debug(
     "Streamlit timings: data_load_ms=%.2f aggregation_ms=%.2f script_total_ms=%.2f",
     timings.get("data_load_ms", 0.0),
     timings.get("aggregation_ms", 0.0),

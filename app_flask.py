@@ -190,7 +190,7 @@ def _load_workbook_data(
             LOGGER.info("Cloud workbook loaded successfully.")
         except Exception as exc:
             cloud_error = str(exc)
-            LOGGER.warning("Cloud workbook load failed, local fallback active.", exc_info=True)
+            LOGGER.warning("Cloud load failed; using local workbook. reason=%s", exc)
     elif data_mode != LOCAL_SOURCE:
         LOGGER.info("Cloud mode requested but not configured. Using local workbook.")
 

@@ -142,7 +142,7 @@ def compute_kpis(
         net_cash_flow=net,
         savings_rate=savings_rate,
     )
-    LOGGER.info(
+    LOGGER.debug(
         "KPI summary computed. income=%s expenses=%s investments=%s savings=%s net=%s savings_rate=%s",
         kpis.total_income,
         kpis.total_expenses,
