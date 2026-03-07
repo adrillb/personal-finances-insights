@@ -147,6 +147,49 @@ def _normalize_date_columns(header: list[str], rows: list[list[str]]) -> list[li
     return normalized_rows
 
 
+def _normalize_numeric_columns(header: list[str], rows: list[list[str]]) -> list[list[str]]:
+    """Replace dot decimal separator with comma in numeric CSV columns."""
+    if not header or not rows:
+        return rows
+
+    normalized_header = [str(col).strip().lower() for col in header]
+    numeric_candidates = [
+        ["amount", "sum", "value"],
+        ["converted amount", "amount converted", "amount in base currency"],
+    ]
+
+    numeric_indexes: list[int] = []
+    for candidates in numeric_candidates:
+        matched = _pick_column(normalized_header, candidates)
+        if matched is None:
+            continue
+        idx = normalized_header.index(matched)
+        if idx not in numeric_indexes:
+            numeric_indexes.append(idx)
+
+    if not numeric_indexes:
+        LOGGER.debug("No numeric columns found in CSV header; skipping numeric normalization.")
+        return rows
+
+    normalized_rows: list[list[str]] = []
+    converted_values = 0
+    numeric_pattern = re.compile(r"^\s*-?\d+(?:\.\d+)?\s*$")
+
+    for row in rows:
+        updated_row = list(row)
+        for idx in numeric_indexes:
+            if idx >= len(updated_row):
+                continue
+            value = str(updated_row[idx])
+            if numeric_pattern.fullmatch(value):
+                updated_row[idx] = value.replace(".", ",")
+                converted_values += 1
+        normalized_rows.append(updated_row)
+
+    LOGGER.debug("Numeric normalization completed. converted_values=%s", converted_values)
+    return normalized_rows
+
+
 def _to_number(series: pd.Series) -> pd.Series:
     cleaned = (
         series.astype(str)
@@ -392,6 +435,7 @@ def run_sync(
     csv_path = _resolve_single_csv(folder_path)
     header, rows = load_monefy_csv_rows(csv_path)
     rows = _normalize_date_columns(header, rows)
+    rows = _normalize_numeric_columns(header, rows)
     imported_rows = sync_to_sheet(
         header,
         rows,
