@@ -154,8 +154,8 @@ def _normalize_numeric_columns(header: list[str], rows: list[list[str]]) -> list
 
     normalized_header = [str(col).strip().lower() for col in header]
     numeric_candidates = [
-        ["amount", "sum", "value"],
-        ["converted amount", "amount converted", "amount in base currency"],
+        ["amount"],
+        ["converted amount"],
     ]
 
     numeric_indexes: list[int] = []
@@ -173,7 +173,7 @@ def _normalize_numeric_columns(header: list[str], rows: list[list[str]]) -> list
 
     normalized_rows: list[list[str]] = []
     converted_values = 0
-    numeric_pattern = re.compile(r"^\s*-?\d+(?:\.\d+)?\s*$")
+    numeric_pattern = re.compile(r"^\s*-?\d{1,3}(?:,\d{3})*(?:\.\d+)?\s*$")
 
     for row in rows:
         updated_row = list(row)
@@ -182,6 +182,7 @@ def _normalize_numeric_columns(header: list[str], rows: list[list[str]]) -> list
                 continue
             value = str(updated_row[idx])
             if numeric_pattern.fullmatch(value):
+                value = value.strip().replace(",", "")
                 updated_row[idx] = value.replace(".", ",")
                 converted_values += 1
         normalized_rows.append(updated_row)
@@ -359,7 +360,6 @@ def _clear_and_replace_worksheet_rows(
     header: list[str],
     rows: list[list[str]],
 ) -> None:
-    worksheet.clear()
 
     max_columns = max(
         len(header),

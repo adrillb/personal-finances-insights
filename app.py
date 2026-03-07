@@ -345,7 +345,7 @@ with tabs[0]:
             marker=dict(color="blue"),
         )
     )
-    fig_overview.update_layout(title="Monthly Income vs Expenses", xaxis_title="Month", yaxis_title="Amount (EUR)")
+    fig_overview.update_layout(title="Monthly Income vs Expenses vs (Investments+Savings)", xaxis_title="Month", yaxis_title="Amount (EUR)")
     st.plotly_chart(fig_overview, width="stretch")
 
     col_a, col_b = st.columns(2)
