@@ -90,9 +90,9 @@ def monthly_totals(general_summary: pd.DataFrame) -> pd.DataFrame:
             pivot[col] = 0.0
 
     pivot["net_cash_flow"] = (
-        pivot["INCOME"] - pivot["EXPENSES"] - pivot["INVESTMENTS"] - pivot["SAVINGS"]
+        pivot["INCOME"] - pivot["EXPENSES"]
     )
-    pivot["savings_rate"] = pivot["SAVINGS"].div(pivot["INCOME"]).replace(
+    pivot["savings_rate"] = (pivot["INVESTMENTS"] + pivot["SAVINGS"]).div(pivot["INCOME"]).replace(
         [pd.NA, pd.NaT, float("inf"), -float("inf")], 0.0
     )
     pivot["savings_rate"] = pivot["savings_rate"].fillna(0.0)
@@ -131,8 +131,8 @@ def compute_kpis(
     expenses = data.get("EXPENSES", 0.0)
     investments = data.get("INVESTMENTS", 0.0)
     savings = data.get("SAVINGS", 0.0)
-    net = income - expenses - investments - savings
-    savings_rate = (savings / income) if income else 0.0
+    net = income - expenses
+    savings_rate = ((savings+investments) / income) if income else 0.0
 
     kpis = KPISet(
         total_income=income,
