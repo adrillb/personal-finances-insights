@@ -3,8 +3,6 @@
 from __future__ import annotations
 
 from datetime import datetime
-import hashlib
-import json
 import logging
 import os
 from pathlib import Path
@@ -30,10 +28,6 @@ NORMALIZED_COLUMNS = [
 LOGGER = logging.getLogger(__name__)
 
 
-def _project_root() -> Path:
-    return Path(__file__).resolve().parent.parent
-
-
 def _resolve_monefy_folder(folder: str | Path | None = None) -> Path:
     value = folder or os.getenv("MONEFY_FOLDER", "")
     if not str(value).strip():
@@ -47,49 +41,16 @@ def _resolve_monefy_folder(folder: str | Path | None = None) -> Path:
     return path
 
 
-def _resolve_processed_log(processed_log: str | Path | None = None) -> Path:
-    if processed_log is not None:
-        resolved = Path(processed_log)
-        LOGGER.debug("Resolved processed log path from argument: %s", resolved)
-        return resolved
-    resolved = _project_root() / "data" / ".monefy_processed.json"
-    LOGGER.debug("Resolved processed log path from default: %s", resolved)
-    return resolved
-
-
-def _file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(chunk)
-    result = digest.hexdigest()
-    LOGGER.debug("Computed SHA256 for %s: %s", path.name, result)
-    return result
-
-
-def _load_processed_entries(log_path: Path) -> dict[str, dict[str, object]]:
-    if not log_path.exists():
-        LOGGER.debug("Processed log not found. Starting with empty entries: %s", log_path)
-        return {}
-    with log_path.open("r", encoding="utf-8") as handle:
-        raw_data = json.load(handle)
-    if not isinstance(raw_data, dict):
-        LOGGER.warning("Processed log has unexpected format. Resetting entries. path=%s", log_path)
-        return {}
-    entries = raw_data.get("entries", {})
-    if isinstance(entries, dict):
-        LOGGER.debug("Loaded processed entries. count=%s", len(entries))
-        return entries
-    LOGGER.warning("Processed log entries value is not a dictionary. path=%s", log_path)
-    return {}
-
-
-def _save_processed_entries(log_path: Path, entries: dict[str, dict[str, object]]) -> None:
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"entries": entries}
-    with log_path.open("w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
-    LOGGER.debug("Saved processed entries. count=%s path=%s", len(entries), log_path)
+def _resolve_single_csv(folder_path: Path) -> Path:
+    csv_files = sorted(folder_path.glob("*.csv"), key=lambda path: path.stat().st_mtime)
+    LOGGER.debug("Discovered CSV files in MONEFY_FOLDER. count=%s", len(csv_files))
+    if not csv_files:
+        raise FileNotFoundError(f"No CSV files found in MONEFY_FOLDER: {folder_path}")
+    if len(csv_files) > 1:
+        raise ValueError(
+            f"Expected exactly one CSV in MONEFY_FOLDER but found {len(csv_files)}: {folder_path}"
+        )
+    return csv_files[0]
 
 
 def _pick_column(columns: list[str], candidates: list[str]) -> str | None:
@@ -183,37 +144,45 @@ def parse_monefy_csv(path: str | Path) -> pd.DataFrame:
         raise
 
 
-def get_unprocessed_csvs(
-    folder: str | Path,
-    processed_log: str | Path | None = None,
-) -> list[Path]:
-    """Return CSV files not present in the processed log (by file hash)."""
-    folder_path = _resolve_monefy_folder(folder)
-    log_path = _resolve_processed_log(processed_log)
-    processed_entries = _load_processed_entries(log_path)
-
-    candidates = sorted(folder_path.glob("*.csv"), key=lambda path: path.stat().st_mtime)
-    LOGGER.debug("Discovered CSV files for processing. count=%s folder=%s", len(candidates), folder_path)
-    unprocessed: list[Path] = []
-    for csv_path in candidates:
-        digest = _file_sha256(csv_path)
-        if digest not in processed_entries:
-            unprocessed.append(csv_path)
-    LOGGER.debug("Unprocessed CSV files resolved. count=%s", len(unprocessed))
-    return unprocessed
+def _create_unique_temp_title(spreadsheet: gspread.Spreadsheet) -> str:
+    base = "__tmp_monefy_sync__"
+    existing_titles = {worksheet.title for worksheet in spreadsheet.worksheets()}
+    counter = 1
+    while f"{base}{counter}" in existing_titles:
+        counter += 1
+    return f"{base}{counter}"
 
 
-def _ensure_worksheet(spreadsheet: gspread.Spreadsheet, sheet_name: str, header: list[str]) -> gspread.Worksheet:
+def _recreate_worksheet(
+    spreadsheet: gspread.Spreadsheet,
+    sheet_name: str,
+    header: list[str],
+) -> gspread.Worksheet:
+    temp_worksheet: gspread.Worksheet | None = None
     try:
-        worksheet = spreadsheet.worksheet(sheet_name)
+        existing_worksheet = spreadsheet.worksheet(sheet_name)
     except gspread.WorksheetNotFound:
-        worksheet = spreadsheet.add_worksheet(title=sheet_name, rows=2000, cols=max(26, len(header) + 5))
-        worksheet.append_row(header, value_input_option="USER_ENTERED")
-        return worksheet
+        existing_worksheet = None
 
-    existing_header = worksheet.row_values(1)
-    if not existing_header:
-        worksheet.append_row(header, value_input_option="USER_ENTERED")
+    if existing_worksheet is not None:
+        worksheets = spreadsheet.worksheets()
+        if len(worksheets) == 1:
+            temp_worksheet = spreadsheet.add_worksheet(
+                title=_create_unique_temp_title(spreadsheet),
+                rows=1,
+                cols=1,
+            )
+        spreadsheet.del_worksheet(existing_worksheet)
+
+    worksheet = spreadsheet.add_worksheet(
+        title=sheet_name,
+        rows=max(2000, len(header) + 10),
+        cols=max(26, len(header) + 5),
+    )
+    worksheet.append_row(header, value_input_option="USER_ENTERED")
+
+    if temp_worksheet is not None:
+        spreadsheet.del_worksheet(temp_worksheet)
     return worksheet
 
 
@@ -229,51 +198,11 @@ def _to_sheet_value(value: object) -> object:
     return value
 
 
-def _read_sheet_rows(worksheet: gspread.Worksheet, header: list[str]) -> pd.DataFrame:
-    raw_values = worksheet.get_all_values()
-    if len(raw_values) <= 1:
-        return pd.DataFrame(columns=header)
-
-    sheet_header = raw_values[0]
-    rows = raw_values[1:]
-    padded_rows: list[list[object]] = []
-    for row in rows:
-        if len(row) < len(sheet_header):
-            row = row + [""] * (len(sheet_header) - len(row))
-        padded_rows.append(row[: len(sheet_header)])
-
-    frame = pd.DataFrame(padded_rows, columns=sheet_header)
-    for column in header:
-        if column not in frame.columns:
-            frame[column] = ""
-    return frame[header]
-
-
-def _normalize_rows_for_sync(frame: pd.DataFrame, header: list[str]) -> pd.DataFrame:
-    scoped = frame.copy()
-    for column in header:
-        if column not in scoped.columns:
-            scoped[column] = ""
-    scoped = scoped[header]
-
-    scoped["date"] = pd.to_datetime(scoped["date"], errors="coerce").dt.strftime("%Y-%m-%d")
-    scoped["date"] = scoped["date"].fillna("")
-    for column in ["account", "category", "currency", "description"]:
-        scoped[column] = scoped[column].fillna("").astype(str).str.strip()
-
-    scoped["amount"] = pd.to_numeric(scoped["amount"], errors="coerce").fillna(0.0).round(2)
-    scoped["converted_amount"] = pd.to_numeric(scoped["converted_amount"], errors="coerce")
-    return scoped
-
-
 def _replace_worksheet_rows(
     worksheet: gspread.Worksheet,
-    header: list[str],
     frame: pd.DataFrame,
 ) -> None:
     values = [[_to_sheet_value(value) for value in row] for row in frame.to_numpy()]
-    worksheet.clear()
-    worksheet.append_row(header, value_input_option="USER_ENTERED")
     if values:
         worksheet.append_rows(values, value_input_option="USER_ENTERED")
 
@@ -283,45 +212,30 @@ def sync_to_sheet(
     spreadsheet_name: str,
     sheet_name: str = "MonefyCSV",
 ) -> int:
-    """Merge, deduplicate, and replace worksheet rows; return net new rows."""
+    """Delete/recreate worksheet and write all normalized rows; return row count."""
     LOGGER.debug(
         "sync_to_sheet started. rows=%s spreadsheet=%s sheet=%s",
         len(df),
         spreadsheet_name,
         sheet_name,
     )
-    if df.empty:
-        LOGGER.warning("sync_to_sheet received no data rows to sync.")
-        return 0
-
     try:
         spreadsheet = get_spreadsheet(spreadsheet_name)
-        worksheet = _ensure_worksheet(spreadsheet, sheet_name, NORMALIZED_COLUMNS)
-        target_header = NORMALIZED_COLUMNS
-
-        existing_rows = _normalize_rows_for_sync(_read_sheet_rows(worksheet, target_header), target_header)
-        incoming_rows = _normalize_rows_for_sync(df, target_header)
-        existing_count = len(existing_rows)
-        incoming_count = len(incoming_rows)
-
-        merged_rows = pd.concat([existing_rows, incoming_rows], ignore_index=True)
-        merged_rows = merged_rows.drop_duplicates(subset=target_header, keep="last")
-        merged_rows = merged_rows.sort_values("date").reset_index(drop=True)
-        final_count = len(merged_rows)
-        net_new_rows = max(final_count - existing_count, 0)
-        duplicate_rows = max(existing_count + incoming_count - final_count, 0)
-
-        _replace_worksheet_rows(worksheet, target_header, merged_rows)
+        worksheet = _recreate_worksheet(spreadsheet, sheet_name, NORMALIZED_COLUMNS)
+        prepared = df.copy()
+        for column in NORMALIZED_COLUMNS:
+            if column not in prepared.columns:
+                prepared[column] = pd.NA
+        prepared = prepared[NORMALIZED_COLUMNS].sort_values("date").reset_index(drop=True)
+        _replace_worksheet_rows(worksheet, prepared)
+        row_count = len(prepared)
         LOGGER.info(
-            "Synced rows to sheet with replacement. sheet=%s existing=%s incoming=%s final=%s net_new=%s deduplicated=%s",
+            "Replaced worksheet '%s' in spreadsheet '%s' with %s row(s).",
             sheet_name,
-            existing_count,
-            incoming_count,
-            final_count,
-            net_new_rows,
-            duplicate_rows,
+            spreadsheet_name,
+            row_count,
         )
-        return net_new_rows
+        return row_count
     except Exception:
         LOGGER.error("Failed writing rows to sheet=%s", sheet_name, exc_info=True)
         raise
@@ -331,70 +245,34 @@ def run_sync(
     folder: str | Path | None = None,
     spreadsheet_name: str | None = None,
     sheet_name: str = "MonefyCSV",
-    processed_log: str | Path | None = None,
-) -> dict[str, int]:
-    """Sync all new CSV files to Google Sheets and update processed log."""
+) -> dict[str, int | str]:
+    """Replace Monefy sheet contents using the single CSV in MONEFY_FOLDER."""
     LOGGER.debug(
-        "run_sync started. folder=%s spreadsheet_name=%s sheet_name=%s processed_log=%s",
+        "run_sync started. folder=%s spreadsheet_name=%s sheet_name=%s",
         folder,
         spreadsheet_name,
         sheet_name,
-        processed_log,
     )
     folder_path = _resolve_monefy_folder(folder)
-    log_path = _resolve_processed_log(processed_log)
-    processed_entries = _load_processed_entries(log_path)
-    LOGGER.debug("Loaded existing processed entries. count=%s", len(processed_entries))
 
     if spreadsheet_name is None:
         spreadsheet_name = os.getenv("SPREADSHEET_NAME", "").strip()
     if not spreadsheet_name:
         raise ValueError("Missing SPREADSHEET_NAME. Set it in .env or pass spreadsheet_name.")
 
-    csv_files = sorted(folder_path.glob("*.csv"), key=lambda path: path.stat().st_mtime)
-    LOGGER.debug("Discovered CSV files for sync. count=%s", len(csv_files))
-    if not csv_files:
-        LOGGER.warning("No CSV files found in Monefy folder: %s", folder_path)
-    processed_files = 0
-    skipped_files = 0
-    imported_rows = 0
-
-    try:
-        for csv_path in csv_files:
-            digest = _file_sha256(csv_path)
-            if digest in processed_entries:
-                skipped_files += 1
-                continue
-
-            frame = parse_monefy_csv(csv_path)
-            rows_added = sync_to_sheet(frame, spreadsheet_name=spreadsheet_name, sheet_name=sheet_name)
-            imported_rows += rows_added
-            processed_files += 1
-            processed_entries[digest] = {
-                "file_name": csv_path.name,
-                "processed_at": datetime.utcnow().isoformat(timespec="seconds") + "Z",
-                "rows_imported": rows_added,
-            }
-            LOGGER.info(
-                "Synced CSV file. file=%s rows_added=%s digest=%s",
-                csv_path.name,
-                rows_added,
-                digest,
-            )
-    except Exception:
-        LOGGER.error("Monefy sync failed.", exc_info=True)
-        raise
-
-    _save_processed_entries(log_path, processed_entries)
+    csv_path = _resolve_single_csv(folder_path)
+    frame = parse_monefy_csv(csv_path)
+    imported_rows = sync_to_sheet(frame, spreadsheet_name=spreadsheet_name, sheet_name=sheet_name)
     summary = {
-        "processed_files": processed_files,
-        "skipped_files": skipped_files,
+        "processed_files": 1,
         "imported_rows": imported_rows,
+        "source_file": csv_path.name,
+        "sheet_name": sheet_name,
     }
     LOGGER.info(
-        "Monefy sync completed. processed_files=%s skipped_files=%s imported_rows=%s",
-        processed_files,
-        skipped_files,
+        "Monefy sync completed. sheet=%s source_file=%s imported_rows=%s",
+        sheet_name,
+        csv_path.name,
         imported_rows,
     )
     return summary

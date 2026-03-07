@@ -319,10 +319,10 @@ This project supports a lightweight Monefy automation flow:
 2. Share the CSV to your OneDrive folder (`MONEFY_FOLDER`)
 3. In the dashboard sidebar, click **Sync Monefy**
 4. The app will:
-   - Detect unprocessed CSV files
-   - Normalize their data
-   - Append rows into the `MonefyCSV` sheet in your Google Sheet
-   - Track processed files in `data/.monefy_processed.json` to prevent duplicates
+   - Validate that `MONEFY_FOLDER` contains exactly one CSV file
+   - Normalize that CSV data
+   - Delete the existing `MonefyCSV` sheet in your Google Sheet (if present)
+   - Create a new `MonefyCSV` sheet and write the normalized rows
 
 Use **Refresh from Cloud** in the sidebar to clear cache and force a fresh cloud download.
 

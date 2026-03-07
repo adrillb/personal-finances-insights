@@ -120,15 +120,15 @@ if st.sidebar.button("Sync Monefy"):
         st.cache_data.clear()
         st.session_state["cloud_message"] = (
             "Monefy sync completed: "
-            f"{sync_summary['processed_files']} file(s), "
-            f"{sync_summary['imported_rows']} row(s), "
-            f"{sync_summary['skipped_files']} skipped."
+            f"recreated {sync_summary['sheet_name']} from "
+            f"{sync_summary['source_file']} with "
+            f"{sync_summary['imported_rows']} row(s)."
         )
         LOGGER.info(
-            "Monefy sync done. processed_files=%s imported_rows=%s skipped_files=%s",
-            sync_summary["processed_files"],
+            "Monefy sync done. sheet=%s source_file=%s imported_rows=%s",
+            sync_summary["sheet_name"],
+            sync_summary["source_file"],
             sync_summary["imported_rows"],
-            sync_summary["skipped_files"],
         )
         st.rerun()
     except Exception as exc:
