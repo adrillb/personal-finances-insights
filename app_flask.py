@@ -632,7 +632,7 @@ def api_sync_monefy() -> Any:
             {
                 "message": (
                     "Monefy sync completed: "
-                    f"recreated {summary['sheet_name']} from "
+                    f"updated {summary['sheet_name']} from "
                     f"{summary['source_file']} with "
                     f"{summary['imported_rows']} row(s)."
                 ),

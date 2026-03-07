@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import csv
 from datetime import datetime
 import logging
 import os
@@ -51,6 +52,40 @@ def _resolve_single_csv(folder_path: Path) -> Path:
             f"Expected exactly one CSV in MONEFY_FOLDER but found {len(csv_files)}: {folder_path}"
         )
     return csv_files[0]
+
+
+def load_monefy_csv_rows(path: str | Path) -> tuple[list[str], list[list[str]]]:
+    """Load CSV rows preserving original text format (dates, numbers, etc.)."""
+    csv_path = Path(path)
+    LOGGER.debug("Loading raw Monefy CSV rows: %s", csv_path)
+    try:
+        with csv_path.open("r", encoding="utf-8-sig", newline="") as csv_file:
+            sample = csv_file.read(4096)
+            csv_file.seek(0)
+            delimiter_candidates = [",", ";", "\t", "|"]
+            delimiter = max(delimiter_candidates, key=sample.count) if sample else ","
+            if sample and sample.count(delimiter) == 0:
+                delimiter = ","
+
+            reader = csv.reader(csv_file, delimiter=delimiter)
+            raw_rows = [row for row in reader]
+    except Exception:
+        LOGGER.error("Failed loading CSV rows: %s", csv_path, exc_info=True)
+        raise
+
+    if not raw_rows:
+        LOGGER.warning("CSV file has no rows: %s", csv_path)
+        return [], []
+
+    header = raw_rows[0]
+    data_rows = [row for row in raw_rows[1:] if any(str(cell).strip() for cell in row)]
+    LOGGER.debug(
+        "Raw CSV loaded. header_cols=%s data_rows=%s delimiter=%r",
+        len(header),
+        len(data_rows),
+        delimiter,
+    )
+    return header, data_rows
 
 
 def _pick_column(columns: list[str], candidates: list[str]) -> str | None:
@@ -207,30 +242,76 @@ def _replace_worksheet_rows(
         worksheet.append_rows(values, value_input_option="USER_ENTERED")
 
 
+def _get_or_create_worksheet(
+    spreadsheet: gspread.Spreadsheet,
+    sheet_name: str,
+    expected_rows: int,
+    expected_cols: int,
+) -> gspread.Worksheet:
+    try:
+        return spreadsheet.worksheet(sheet_name)
+    except gspread.WorksheetNotFound:
+        LOGGER.info(
+            "Worksheet '%s' not found in '%s'. Creating it.",
+            sheet_name,
+            spreadsheet.title,
+        )
+        return spreadsheet.add_worksheet(
+            title=sheet_name,
+            rows=max(2000, expected_rows + 10),
+            cols=max(26, expected_cols + 5),
+        )
+
+
+def _clear_and_replace_worksheet_rows(
+    worksheet: gspread.Worksheet,
+    header: list[str],
+    rows: list[list[str]],
+) -> None:
+    worksheet.clear()
+
+    max_columns = max(
+        len(header),
+        max((len(row) for row in rows), default=0),
+    )
+    if max_columns == 0:
+        return
+
+    values: list[list[str]] = []
+    if header:
+        padded_header = header + ([""] * (max_columns - len(header)))
+        values.append(padded_header)
+    values.extend(row + ([""] * (max_columns - len(row))) for row in rows)
+    if not values:
+        return
+    worksheet.update("A1", values, value_input_option="RAW")
+
+
 def sync_to_sheet(
-    df: pd.DataFrame,
+    header: list[str],
+    rows: list[list[str]],
     spreadsheet_name: str,
     sheet_name: str = "MonefyCSV",
 ) -> int:
-    """Delete/recreate worksheet and write all normalized rows; return row count."""
+    """Clear worksheet values and write raw CSV rows; return imported data row count."""
     LOGGER.debug(
         "sync_to_sheet started. rows=%s spreadsheet=%s sheet=%s",
-        len(df),
+        len(rows),
         spreadsheet_name,
         sheet_name,
     )
     try:
         spreadsheet = get_spreadsheet(spreadsheet_name)
-        worksheet = _recreate_worksheet(spreadsheet, sheet_name, NORMALIZED_COLUMNS)
-        prepared = df.copy()
-        for column in NORMALIZED_COLUMNS:
-            if column not in prepared.columns:
-                prepared[column] = pd.NA
-        prepared = prepared[NORMALIZED_COLUMNS].sort_values("date").reset_index(drop=True)
-        _replace_worksheet_rows(worksheet, prepared)
-        row_count = len(prepared)
+        worksheet = _get_or_create_worksheet(
+            spreadsheet,
+            sheet_name,
+            expected_rows=len(rows) + 1,
+            expected_cols=max(len(header), max((len(row) for row in rows), default=0)),
+        )
+        _clear_and_replace_worksheet_rows(worksheet, header, rows)
+        row_count = len(rows)
         LOGGER.info(
-            "Replaced worksheet '%s' in spreadsheet '%s' with %s row(s).",
+            "Cleared and updated worksheet '%s' in spreadsheet '%s' with %s row(s).",
             sheet_name,
             spreadsheet_name,
             row_count,
@@ -246,7 +327,7 @@ def run_sync(
     spreadsheet_name: str | None = None,
     sheet_name: str = "MonefyCSV",
 ) -> dict[str, int | str]:
-    """Replace Monefy sheet contents using the single CSV in MONEFY_FOLDER."""
+    """Clear Monefy sheet values and copy the single CSV in MONEFY_FOLDER."""
     LOGGER.debug(
         "run_sync started. folder=%s spreadsheet_name=%s sheet_name=%s",
         folder,
@@ -261,8 +342,13 @@ def run_sync(
         raise ValueError("Missing SPREADSHEET_NAME. Set it in .env or pass spreadsheet_name.")
 
     csv_path = _resolve_single_csv(folder_path)
-    frame = parse_monefy_csv(csv_path)
-    imported_rows = sync_to_sheet(frame, spreadsheet_name=spreadsheet_name, sheet_name=sheet_name)
+    header, rows = load_monefy_csv_rows(csv_path)
+    imported_rows = sync_to_sheet(
+        header,
+        rows,
+        spreadsheet_name=spreadsheet_name,
+        sheet_name=sheet_name,
+    )
     summary = {
         "processed_files": 1,
         "imported_rows": imported_rows,

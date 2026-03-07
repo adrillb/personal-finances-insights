@@ -320,9 +320,8 @@ This project supports a lightweight Monefy automation flow:
 3. In the dashboard sidebar, click **Sync Monefy**
 4. The app will:
    - Validate that `MONEFY_FOLDER` contains exactly one CSV file
-   - Normalize that CSV data
-   - Delete the existing `MonefyCSV` sheet in your Google Sheet (if present)
-   - Create a new `MonefyCSV` sheet and write the normalized rows
+   - Keep the existing `MonefyCSV` sheet
+   - Clear its values and copy the CSV content as-is (preserving text formats like dates)
 
 Use **Refresh from Cloud** in the sidebar to clear cache and force a fresh cloud download.
 

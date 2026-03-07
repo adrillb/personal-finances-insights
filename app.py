@@ -120,7 +120,7 @@ if st.sidebar.button("Sync Monefy"):
         st.cache_data.clear()
         st.session_state["cloud_message"] = (
             "Monefy sync completed: "
-            f"recreated {sync_summary['sheet_name']} from "
+            f"updated {sync_summary['sheet_name']} from "
             f"{sync_summary['source_file']} with "
             f"{sync_summary['imported_rows']} row(s)."
         )
