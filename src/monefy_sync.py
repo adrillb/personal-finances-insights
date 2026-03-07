@@ -114,7 +114,7 @@ def _parse_ddmmyyyy_to_iso(value: str) -> str | None:
     month = int(match.group(2))
     year = int(match.group(3))
     try:
-        return datetime(year, month, day).strftime("%Y-%m-%d")
+        return datetime(year, month, day).strftime("%d/%m/%Y")
     except ValueError:
         return None
 
