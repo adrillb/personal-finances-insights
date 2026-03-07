@@ -321,6 +321,8 @@ with tabs[0]:
             y=monthly_overview["income"],
             mode="lines+markers",
             name="Income",
+            line=dict(color="green"),
+            marker=dict(color="green"),
         )
     )
     fig_overview.add_trace(
@@ -329,6 +331,18 @@ with tabs[0]:
             y=monthly_overview["expenses"],
             mode="lines+markers",
             name="Expenses",
+            line=dict(color="red"),
+            marker=dict(color="red"),
+        )
+    )
+    fig_overview.add_trace(
+        go.Scatter(
+            x=monthly_overview["month"],
+            y=monthly_overview["savings"]+monthly_overview["investments"],
+            mode="lines+markers",
+            name="Investments + Savings",
+            line=dict(color="blue"),
+            marker=dict(color="blue"),
         )
     )
     fig_overview.update_layout(title="Monthly Income vs Expenses", xaxis_title="Month", yaxis_title="Amount (EUR)")
