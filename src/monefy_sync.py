@@ -7,6 +7,7 @@ from datetime import datetime
 import logging
 import os
 from pathlib import Path
+import re
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -97,6 +98,53 @@ def _pick_column(columns: list[str], candidates: list[str]) -> str | None:
         if any(token in column for token in candidate_set):
             return column
     return None
+
+
+def _parse_ddmmyyyy_to_iso(value: str) -> str | None:
+    text = str(value).strip()
+    if not text:
+        return None
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}", text):
+        return text
+
+    match = re.fullmatch(r"(\d{1,2})[\/\.-](\d{1,2})[\/\.-](\d{4})", text)
+    if not match:
+        return None
+    day = int(match.group(1))
+    month = int(match.group(2))
+    year = int(match.group(3))
+    try:
+        return datetime(year, month, day).strftime("%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def _normalize_date_columns(header: list[str], rows: list[list[str]]) -> list[list[str]]:
+    """Normalize date-like values to ISO format to avoid locale ambiguity in Sheets."""
+    if not header or not rows:
+        return rows
+
+    normalized_header = [str(col).strip().lower() for col in header]
+    date_col = _pick_column(normalized_header, ["date", "transaction date"])
+    if date_col is None:
+        LOGGER.debug("No date column found in CSV header; skipping date normalization.")
+        return rows
+
+    date_index = normalized_header.index(date_col)
+    normalized_rows: list[list[str]] = []
+    converted_count = 0
+
+    for row in rows:
+        updated_row = list(row)
+        if date_index < len(updated_row):
+            normalized = _parse_ddmmyyyy_to_iso(str(updated_row[date_index]))
+            if normalized is not None:
+                updated_row[date_index] = normalized
+                converted_count += 1
+        normalized_rows.append(updated_row)
+
+    LOGGER.debug("Date normalization completed. converted_rows=%s", converted_count)
+    return normalized_rows
 
 
 def _to_number(series: pd.Series) -> pd.Series:
@@ -284,7 +332,7 @@ def _clear_and_replace_worksheet_rows(
     values.extend(row + ([""] * (max_columns - len(row))) for row in rows)
     if not values:
         return
-    worksheet.update("A1", values, value_input_option="RAW")
+    worksheet.update("A1", values, value_input_option="USER_ENTERED")
 
 
 def sync_to_sheet(
@@ -343,6 +391,7 @@ def run_sync(
 
     csv_path = _resolve_single_csv(folder_path)
     header, rows = load_monefy_csv_rows(csv_path)
+    rows = _normalize_date_columns(header, rows)
     imported_rows = sync_to_sheet(
         header,
         rows,
