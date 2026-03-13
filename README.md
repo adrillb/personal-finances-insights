@@ -62,9 +62,25 @@ Set your preferred mode in `.env`.
 
 If `.venv` already exists, you can reuse it.
 
+**Linux / macOS / WSL:**
+
 ```bash
 python3 -m venv .venv
 source .venv/bin/activate
+```
+
+**Windows (CMD):**
+
+```cmd
+python -m venv .venv
+.venv\Scripts\activate
+```
+
+**Windows (PowerShell):**
+
+```powershell
+python -m venv .venv
+.venv\Scripts\Activate.ps1
 ```
 
 ### 2) Install dependencies
